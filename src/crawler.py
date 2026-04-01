@@ -17,6 +17,8 @@ class MomijiCrawler:
         self.client = HttpClient(self.config)
         self.parser = Parser()
         self.exporter = Exporter(output_dir=self.config.output_dir)
+        self.faculty_link_status: Dict[str, str] = {}
+        self.subject_link_status: Dict[str, str] = {}
 
     async def fetch_html(self, url: str) -> str:
         response = await self.client.get(url)
@@ -32,16 +34,25 @@ class MomijiCrawler:
 
         for a in soup.select("a[href]"):
             href = a.get("href")
-            if not href or not href.endswith(".html"):
+            if not href:
+                continue
+            if not href.endswith(".html"):
+                self.faculty_link_status[href] = "rejected:not html"
                 continue
             if href.lower().endswith("index.html"):
+                self.faculty_link_status[href] = "rejected:index"
                 continue
             if faculty_pattern.match(href):
-                links.append(urljoin(self.config.base_url, href))
+                full_url = urljoin(self.config.base_url, href)
+                links.append(full_url)
+                self.faculty_link_status[full_url] = "accepted"
+            else:
+                self.faculty_link_status[href] = "rejected:pattern"
 
         links = sorted(set(links))
         if not links:
             raise ValueError("No faculty URLs found in page structure. Check HTML structure.")
+
         return links
 
     async def collect_subject_urls(self, faculty_url: str) -> List[str]:
@@ -53,12 +64,20 @@ class MomijiCrawler:
 
         for a in soup.select("a[href]"):
             href = a.get("href")
-            if not href or not href.endswith(".html"):
+            if not href:
+                continue
+            if not href.endswith(".html"):
+                self.subject_link_status[href] = "rejected:not html"
                 continue
             if href.lower().endswith("index.html"):
+                self.subject_link_status[href] = "rejected:index"
                 continue
             if subject_pattern.match(href):
-                links.append(urljoin(faculty_url, href))
+                full_url = urljoin(faculty_url, href)
+                links.append(full_url)
+                self.subject_link_status[full_url] = "accepted"
+            else:
+                self.subject_link_status[href] = "rejected:pattern"
 
         links = sorted(set(links))
         if not links:
@@ -71,13 +90,28 @@ class MomijiCrawler:
         subject = Parser.parse_subject_page(html, relative_url, faculty_name)
         return subject
 
-    async def run(self, max_subjects: int = 0, dry_run: bool = False):
+    async def run(self, max_subjects: int = 20, dry_run: bool = False):
         try:
             faculty_urls = await self.collect_faculty_urls()
             result: Dict[str, SubjectDetails] = {}
+
+            print("Faculty URL status:")
+            for url, status in self.faculty_link_status.items():
+                print(f"  {status}: {url}")
+
             for faculty_url in faculty_urls:
                 faculty_name = faculty_url.split("/")[-1].replace(".html", "")
-                subject_urls = await self.collect_subject_urls(faculty_url)
+                try:
+                    subject_urls = await self.collect_subject_urls(faculty_url)
+                except ValueError as e:
+                    print(f"WARNING: {e}", file=sys.stderr)
+                    continue
+
+                print(f"Subject URL status for {faculty_url}:")
+                for url, status in self.subject_link_status.items():
+                    if url.startswith(faculty_url):
+                        print(f"  {status}: {url}")
+
                 for subject_url in subject_urls:
                     if max_subjects > 0 and len(result) >= max_subjects:
                         break

@@ -14,7 +14,7 @@ def run(
         "https://momiji.hiroshima-u.ac.jp/syllabusHtml/", help="シラバストップページURL"
     ),
     output_dir: str = typer.Option("output", help="JSON出力ディレクトリ"),
-    max_subjects: int = typer.Option(0, help="取得上限(0は無制限)"),
+    max_subjects: int = typer.Option(20, help="取得上限(0は無制限; デフォルト20)"),
     dry_run: bool = typer.Option(False, help="実際の出力を行わずに動作確認する"),
 ) -> None:
     crawler = MomijiCrawler(base_url=base_url, output_dir=output_dir)
