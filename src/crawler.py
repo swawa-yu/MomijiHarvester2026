@@ -24,22 +24,36 @@ class MomijiCrawler:
     async def collect_faculty_urls(self) -> List[str]:
         html = await self.fetch_html(self.config.base_url)
         soup = Parser.get_html_soup(html)
-        faculty_links = []
+
+        links = []
         for a in soup.select("a[href]"):
             href = a.get("href")
-            if href and "faculty" in href:  # ダミー条件、要調整
-                faculty_links.append(urljoin(self.config.base_url, href))
-        return faculty_links
+            if not href or not href.endswith(".html"):
+                continue
+            if href.lower().endswith("index.html"):
+                continue
+            # トップページにある学部・学科ページへのリンク
+            links.append(urljoin(self.config.base_url, href))
+
+        # 重複除外
+        return sorted(set(links))
 
     async def collect_subject_urls(self, faculty_url: str) -> List[str]:
         html = await self.fetch_html(faculty_url)
         soup = Parser.get_html_soup(html)
-        subject_links = []
+
+        links = []
         for a in soup.select("a[href]"):
             href = a.get("href")
-            if href and href.endswith(".html") and "_" in href:
-                subject_links.append(urljoin(faculty_url, href))
-        return subject_links
+            if not href or not href.endswith(".html"):
+                continue
+            # 学部/学科ページに掲載されている授業詳細ページ（例: 2026_AA_10000100.html）
+            if href == "index.html" or href == faculty_url:
+                continue
+            if href.count("_") >= 2:
+                links.append(urljoin(faculty_url, href))
+
+        return sorted(set(links))
 
     async def process_subject(self, subject_url: str, faculty_name: str) -> SubjectDetails:
         html = await self.fetch_html(subject_url)
@@ -56,7 +70,7 @@ class MomijiCrawler:
                 subject_urls = await self.collect_subject_urls(faculty_url)
                 for subject_url in subject_urls:
                     subject = await self.process_subject(subject_url, faculty_name)
-                    result[subject.講義コード] = subject
+                    result[subject.code] = subject
             output_path = self.exporter.export(result)
             print(f"Exported {len(result)} subjects to {output_path}")
         finally:

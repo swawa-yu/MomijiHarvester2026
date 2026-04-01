@@ -1,3 +1,4 @@
+from pathlib import Path
 import pytest
 from src.parser import Parser
 from src.models import SubjectDetails
@@ -6,16 +7,37 @@ from src.models import SubjectDetails
 def test_parse_subject_page_minimal():
     html = """
     <html><body>
-      <div id='年度'>2025年度</div>
-      <div id='講義コード'>10000100</div>
-      <div id='科目区分'>大学教育入門</div>
-      <div id='授業科目名'>大学教育入門[1総総,1文,1経]</div>
-      <div id='担当教員名'>林 光緒</div>
+      <table>
+        <tr><th>年度</th><td>2025年度</td></tr>
+        <tr><th>講義コード</th><td>10000100</td></tr>
+        <tr><th>科目区分</th><td>大学教育入門</td></tr>
+        <tr><th>授業科目名</th><td>大学教育入門[1総総,1文,1経]</td></tr>
+        <tr><th>担当教員名</th><td>林 光緒</td></tr>
+      </table>
     </body></html>
     """
 
     subject = Parser.parse_subject_page(html, "2025_AA_10000100.html", "教養教育")
     assert isinstance(subject, SubjectDetails)
-    assert subject.講義コード == "10000100"
-    assert subject.年度 == "2025年度"
-    assert subject.開講部局 == "教養教育"
+    assert subject.code == "10000100"
+    assert subject.nendo == "2025年度"
+    assert subject.faculty == "教養教育"
+
+
+def test_parse_subject_page_with_actual_sample():
+    html = Path("tests/sample/2026_AA_10000100.html").read_text(encoding="utf-8")
+    subject = Parser.parse_subject_page(html, "2026_AA_10000100.html", "教養教育")
+
+    assert subject.code == "10000100"
+    assert subject.category == "大学教育入門"
+    assert subject.title.startswith("大学教育入門")
+    assert subject.instructor == "林　光緒"
+    assert "東広島" in subject.campus
+    assert "1年次生" in subject.term
+    assert subject.credits == "2.0"
+    assert subject.language.startswith("B")
+    obj = subject.model_dump(by_alias=True)
+    assert "大学で学ぶということはどういうことか" in obj["授業の目標・概要等"]
+    assert "受講または授業動画視聴前に" in obj["予習・復習への アドバイス"]
+    assert "第1章、12章、15章" in obj["履修上の注意 受講条件等"]
+    assert "今、みなさんは" in obj["メッセージ"]
