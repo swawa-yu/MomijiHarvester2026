@@ -1,4 +1,5 @@
 import asyncio
+import re
 import sys
 from urllib.parse import urljoin
 from typing import List, Dict
@@ -26,35 +27,43 @@ class MomijiCrawler:
         html = await self.fetch_html(self.config.base_url)
         soup = Parser.get_html_soup(html)
 
+        faculty_pattern = re.compile(r"^\d{4}_[A-Za-z0-9]+\.html$")
         links = []
+
         for a in soup.select("a[href]"):
             href = a.get("href")
             if not href or not href.endswith(".html"):
                 continue
             if href.lower().endswith("index.html"):
                 continue
-            # トップページにある学部・学科ページへのリンク
-            links.append(urljoin(self.config.base_url, href))
+            if faculty_pattern.match(href):
+                links.append(urljoin(self.config.base_url, href))
 
-        # 重複除外
-        return sorted(set(links))
+        links = sorted(set(links))
+        if not links:
+            raise ValueError("No faculty URLs found in page structure. Check HTML structure.")
+        return links
 
     async def collect_subject_urls(self, faculty_url: str) -> List[str]:
         html = await self.fetch_html(faculty_url)
         soup = Parser.get_html_soup(html)
 
+        subject_pattern = re.compile(r"^\d{4}_[A-Za-z0-9]+_\d{8}\.html$")
         links = []
+
         for a in soup.select("a[href]"):
             href = a.get("href")
             if not href or not href.endswith(".html"):
                 continue
-            # 学部/学科ページに掲載されている授業詳細ページ（例: 2026_AA_10000100.html）
-            if href == "index.html" or href == faculty_url:
+            if href.lower().endswith("index.html"):
                 continue
-            if href.count("_") >= 2:
+            if subject_pattern.match(href):
                 links.append(urljoin(faculty_url, href))
 
-        return sorted(set(links))
+        links = sorted(set(links))
+        if not links:
+            raise ValueError(f"No subject URLs found in faculty page {faculty_url}. Check HTML structure.")
+        return links
 
     async def process_subject(self, subject_url: str, faculty_name: str) -> SubjectDetails:
         html = await self.fetch_html(subject_url)
