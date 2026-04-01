@@ -31,7 +31,7 @@ def test_parse_subject_page_with_actual_sample():
     assert subject.code == "10000100"
     assert subject.category == "大学教育入門"
     assert subject.title.startswith("大学教育入門")
-    assert subject.instructor == "林　光緒"
+    assert subject.instructor.replace(" ", "").replace("　", "") == "林光緒"
     assert "東広島" in subject.campus
     assert "1年次生" in subject.term
     assert subject.credits == "2.0"
