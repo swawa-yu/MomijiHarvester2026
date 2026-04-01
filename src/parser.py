@@ -54,26 +54,29 @@ class Parser:
                         return v
             return ""
 
+        def normalize_text(text: str) -> str:
+            return " ".join(text.replace("\r", " ").replace("\n", " ").split())
+
         data = {
-            "relative URL": base_url,
-            "年度": find_value("年度"),
-            "開講部局": find_value("開講部局") or faculty_name,
-            "講義コード": find_value("講義コード"),
-            "科目区分": find_value("科目区分"),
-            "授業科目名": find_value("授業科目名"),
-            "担当教員名": find_value("担当教員名"),
-            "開講キャンパス": find_value("開講キャンパス"),
-            "開設期": find_value("開設期"),
-            "曜日・時限・講義室": find_value("曜日・時限・講義室"),
-            "単位": find_value("単位"),
-            "使用言語": find_value("使用言語"),
-            "学習の段階": find_value("学習の段階"),
-            "対象学生": find_value("対象学生"),
-            "授業の目標・概要等": find_value("授業の目標・概要等"),
-            "予習・復習への アドバイス": find_value("予習・復習への アドバイス", alternates=["予習・復習へのアドバイス"]),
-            "履修上の注意 受講条件等": find_value("履修上の注意 受講条件等", alternates=["履修上の注意受講条件等", "履修上の注意 受講条件等"]),
-            "メッセージ": find_value("メッセージ"),
-            "その他": find_value("その他"),
+            "relative URL": normalize_text(base_url),
+            "年度": normalize_text(find_value("年度")),
+            "開講部局": normalize_text(find_value("開講部局") or faculty_name),
+            "講義コード": normalize_text(find_value("講義コード")),
+            "科目区分": normalize_text(find_value("科目区分")),
+            "授業科目名": normalize_text(find_value("授業科目名")),
+            "担当教員名": normalize_text(find_value("担当教員名")),
+            "開講キャンパス": normalize_text(find_value("開講キャンパス")),
+            "開設期": normalize_text(find_value("開設期")),
+            "曜日・時限・講義室": normalize_text(find_value("曜日・時限・講義室")),
+            "単位": normalize_text(find_value("単位")),
+            "使用言語": normalize_text(find_value("使用言語")),
+            "学習の段階": normalize_text(find_value("学習の段階")),
+            "対象学生": normalize_text(find_value("対象学生")),
+            "授業の目標・概要等": normalize_text(find_value("授業の目標・概要等")),
+            "予習・復習への アドバイス": normalize_text(find_value("予習・復習への アドバイス", alternates=["予習・復習へのアドバイス"])),
+            "履修上の注意 受講条件等": normalize_text(find_value("履修上の注意 受講条件等", alternates=["履修上の注意受講条件等", "履修上の注意 受講条件等"])),
+            "メッセージ": normalize_text(find_value("メッセージ")),
+            "その他": normalize_text(find_value("その他")),
         }
 
         return SubjectDetails(**{k: v for k, v in data.items() if v is not None})

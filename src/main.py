@@ -15,9 +15,10 @@ def run(
     ),
     output_dir: str = typer.Option("output", help="JSON出力ディレクトリ"),
     max_subjects: int = typer.Option(20, help="取得上限(0は無制限; デフォルト20)"),
+    include_english: bool = typer.Option(False, help="英語版（_en）リンクも対象にする"),
     dry_run: bool = typer.Option(False, help="実際の出力を行わずに動作確認する"),
 ) -> None:
-    crawler = MomijiCrawler(base_url=base_url, output_dir=output_dir)
+    crawler = MomijiCrawler(base_url=base_url, output_dir=output_dir, include_english=include_english)
     asyncio.run(crawler.run(max_subjects=max_subjects, dry_run=dry_run))
 
 

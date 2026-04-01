@@ -12,11 +12,12 @@ from src.models import SubjectDetails
 
 
 class MomijiCrawler:
-    def __init__(self, base_url: str, output_dir: str = "output"):
+    def __init__(self, base_url: str, output_dir: str = "output", include_english: bool = False):
         self.config = ScraperConfig(base_url=base_url, output_dir=output_dir)
         self.client = HttpClient(self.config)
         self.parser = Parser()
         self.exporter = Exporter(output_dir=self.config.output_dir)
+        self.include_english = include_english
         self.faculty_link_status: Dict[str, str] = {}
         self.subject_link_status: Dict[str, str] = {}
 
@@ -29,7 +30,7 @@ class MomijiCrawler:
         html = await self.fetch_html(self.config.base_url)
         soup = Parser.get_html_soup(html)
 
-        faculty_pattern = re.compile(r"^\d{4}_[A-Za-z0-9]+\.html$")
+        faculty_pattern = re.compile(r"^\d{4}_[A-Za-z0-9]+(?:_en)?\.html$")
         links = []
 
         for a in soup.select("a[href]"):
@@ -73,6 +74,9 @@ class MomijiCrawler:
                 continue
             if href.lower().endswith("index.html"):
                 self.subject_link_status[href] = "rejected:index"
+                continue
+            if not self.include_english and href.endswith("_en.html"):
+                self.subject_link_status[href] = "rejected:english"
                 continue
             if subject_pattern.match(href):
                 full_url = urljoin(faculty_url, href)
@@ -140,7 +144,8 @@ class MomijiCrawler:
                 print(f"Dry run complete. {len(result)} subjects parsed.")
                 return
 
-            output_path = self.exporter.export(result)
+            lang_tag = "_en" if self.include_english else ""
+            output_path = self.exporter.export(result, lang_tag=lang_tag)
             print(f"Exported {len(result)} subjects to {output_path}")
         finally:
             await self.client.close()
