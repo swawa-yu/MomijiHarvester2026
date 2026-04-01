@@ -59,7 +59,9 @@ class MomijiCrawler:
         html = await self.fetch_html(faculty_url)
         soup = Parser.get_html_soup(html)
 
-        subject_pattern = re.compile(r"^\d{4}_[A-Za-z0-9]+_\d{8}\.html$")
+        self.subject_link_status = {}
+        # 例: 2026_01_AQH00101.html, 2026_AA_10000100.html
+        subject_pattern = re.compile(r"^\d{4}_[A-Za-z0-9]+_[A-Za-z0-9]+\.html$")
         links = []
 
         for a in soup.select("a[href]"):
@@ -108,10 +110,19 @@ class MomijiCrawler:
                     continue
 
                 print(f"Subject URL status for {faculty_url}:")
+                subject_accepted = 0
+                subject_rejected = 0
                 for url, status in self.subject_link_status.items():
-                    if url.startswith(faculty_url):
+                    if url.startswith(faculty_url) or not url.startswith("http"):
+                        if status == "accepted":
+                            subject_accepted += 1
+                        else:
+                            subject_rejected += 1
                         print(f"  {status}: {url}")
 
+                print(f"  Subject candidates: {len(subject_urls)} (accepted {subject_accepted}, rejected {subject_rejected})")
+
+                parsed_count_before = len(result)
                 for subject_url in subject_urls:
                     if max_subjects > 0 and len(result) >= max_subjects:
                         break
@@ -120,6 +131,8 @@ class MomijiCrawler:
                         result[subject.code] = subject
                     except Exception as e:
                         print(f"Failed to process {subject_url}: {e}", file=sys.stderr)
+                parsed_count_after = len(result)
+                print(f"  Parsed subjects for {faculty_name}: {parsed_count_after - parsed_count_before}")
                 if max_subjects > 0 and len(result) >= max_subjects:
                     break
 
