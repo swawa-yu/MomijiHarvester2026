@@ -16,7 +16,7 @@ class Exporter:
         output_path = os.path.join(
             self.output_dir, f"subject_details_main_{date.today().isoformat()}.json"
         )
-        data = {k: v.dict(by_alias=True) for k, v in subjects.items()}
+        data = {k: v.model_dump(by_alias=True) for k, v in subjects.items()}
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         return output_path

@@ -1,4 +1,5 @@
 import asyncio
+import sys
 from urllib.parse import urljoin
 from typing import List, Dict
 
@@ -10,8 +11,8 @@ from src.models import SubjectDetails
 
 
 class MomijiCrawler:
-    def __init__(self, base_url: str):
-        self.config = ScraperConfig(base_url=base_url)
+    def __init__(self, base_url: str, output_dir: str = "output"):
+        self.config = ScraperConfig(base_url=base_url, output_dir=output_dir)
         self.client = HttpClient(self.config)
         self.parser = Parser()
         self.exporter = Exporter(output_dir=self.config.output_dir)
@@ -61,7 +62,7 @@ class MomijiCrawler:
         subject = Parser.parse_subject_page(html, relative_url, faculty_name)
         return subject
 
-    async def run(self):
+    async def run(self, max_subjects: int = 0, dry_run: bool = False):
         try:
             faculty_urls = await self.collect_faculty_urls()
             result: Dict[str, SubjectDetails] = {}
@@ -69,8 +70,20 @@ class MomijiCrawler:
                 faculty_name = faculty_url.split("/")[-1].replace(".html", "")
                 subject_urls = await self.collect_subject_urls(faculty_url)
                 for subject_url in subject_urls:
-                    subject = await self.process_subject(subject_url, faculty_name)
-                    result[subject.code] = subject
+                    if max_subjects > 0 and len(result) >= max_subjects:
+                        break
+                    try:
+                        subject = await self.process_subject(subject_url, faculty_name)
+                        result[subject.code] = subject
+                    except Exception as e:
+                        print(f"Failed to process {subject_url}: {e}", file=sys.stderr)
+                if max_subjects > 0 and len(result) >= max_subjects:
+                    break
+
+            if dry_run:
+                print(f"Dry run complete. {len(result)} subjects parsed.")
+                return
+
             output_path = self.exporter.export(result)
             print(f"Exported {len(result)} subjects to {output_path}")
         finally:
