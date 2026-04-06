@@ -9,6 +9,7 @@ from src.config import ScraperConfig
 from src.parser import Parser
 from src.exporter import Exporter
 from src.models import SubjectDetails
+from tqdm import tqdm
 
 
 class MomijiCrawler:
@@ -32,6 +33,7 @@ class MomijiCrawler:
 
         faculty_pattern = re.compile(r"^\d{4}_[A-Za-z0-9]+(?:_en)?\.html$")
         links = []
+        seen = set()
 
         for a in soup.select("a[href]"):
             href = a.get("href")
@@ -45,12 +47,13 @@ class MomijiCrawler:
                 continue
             if faculty_pattern.match(href):
                 full_url = urljoin(self.config.base_url, href)
-                links.append(full_url)
+                if full_url not in seen:
+                    seen.add(full_url)
+                    links.append(full_url)
                 self.faculty_link_status[full_url] = "accepted"
             else:
                 self.faculty_link_status[href] = "rejected:pattern"
 
-        links = sorted(set(links))
         if not links:
             raise ValueError("No faculty URLs found in page structure. Check HTML structure.")
 
@@ -64,6 +67,7 @@ class MomijiCrawler:
         # 例: 2026_01_AQH00101.html, 2026_AA_10000100.html
         subject_pattern = re.compile(r"^\d{4}_[A-Za-z0-9]+_[A-Za-z0-9]+\.html$")
         links = []
+        seen = set()
 
         for a in soup.select("a[href]"):
             href = a.get("href")
@@ -80,12 +84,13 @@ class MomijiCrawler:
                 continue
             if subject_pattern.match(href):
                 full_url = urljoin(faculty_url, href)
-                links.append(full_url)
+                if full_url not in seen:
+                    seen.add(full_url)
+                    links.append(full_url)
                 self.subject_link_status[full_url] = "accepted"
             else:
                 self.subject_link_status[href] = "rejected:pattern"
 
-        links = sorted(set(links))
         if not links:
             raise ValueError(f"No subject URLs found in faculty page {faculty_url}. Check HTML structure.")
         return links
@@ -100,6 +105,7 @@ class MomijiCrawler:
         try:
             faculty_urls = await self.collect_faculty_urls()
             result: Dict[str, SubjectDetails] = {}
+            subject_batches = []
 
             print("Faculty URL status:")
             for url, status in self.faculty_link_status.items():
@@ -112,33 +118,42 @@ class MomijiCrawler:
                 except ValueError as e:
                     print(f"WARNING: {e}", file=sys.stderr)
                     continue
+                subject_batches.append((faculty_url, faculty_name, subject_urls))
 
-                print(f"Subject URL status for {faculty_url}:")
-                subject_accepted = 0
-                subject_rejected = 0
-                for url, status in self.subject_link_status.items():
-                    if url.startswith(faculty_url) or not url.startswith("http"):
-                        if status == "accepted":
-                            subject_accepted += 1
-                        else:
-                            subject_rejected += 1
-                        print(f"  {status}: {url}")
+            total_subjects = sum(len(urls) for _, _, urls in subject_batches)
+            print(f"Found {len(subject_batches)} faculties and {total_subjects} subject pages.")
 
-                print(f"  Subject candidates: {len(subject_urls)} (accepted {subject_accepted}, rejected {subject_rejected})")
+            with tqdm(total=total_subjects, desc="Parsing subjects", unit="lecture") as bar:
+                for faculty_url, faculty_name, subject_urls in subject_batches:
+                    bar.set_description(f"Parsing {faculty_name}")
+                    print(f"Subject URL status for {faculty_url}:")
+                    subject_accepted = 0
+                    subject_rejected = 0
+                    for url, status in self.subject_link_status.items():
+                        if url.startswith(faculty_url) or not url.startswith("http"):
+                            if status == "accepted":
+                                subject_accepted += 1
+                            else:
+                                subject_rejected += 1
+                            print(f"  {status}: {url}")
 
-                parsed_count_before = len(result)
-                for subject_url in subject_urls:
+                    print(f"  Subject candidates: {len(subject_urls)} (accepted {subject_accepted}, rejected {subject_rejected})")
+                    parsed_count_before = len(result)
+
+                    for subject_url in subject_urls:
+                        if max_subjects > 0 and len(result) >= max_subjects:
+                            break
+                        try:
+                            subject = await self.process_subject(subject_url, faculty_name)
+                            result[subject.code] = subject
+                        except Exception as e:
+                            print(f"Failed to process {subject_url}: {e}", file=sys.stderr)
+                        bar.update(1)
+
+                    parsed_count_after = len(result)
+                    print(f"  Parsed subjects for {faculty_name}: {parsed_count_after - parsed_count_before}")
                     if max_subjects > 0 and len(result) >= max_subjects:
                         break
-                    try:
-                        subject = await self.process_subject(subject_url, faculty_name)
-                        result[subject.code] = subject
-                    except Exception as e:
-                        print(f"Failed to process {subject_url}: {e}", file=sys.stderr)
-                parsed_count_after = len(result)
-                print(f"  Parsed subjects for {faculty_name}: {parsed_count_after - parsed_count_before}")
-                if max_subjects > 0 and len(result) >= max_subjects:
-                    break
 
             if dry_run:
                 print(f"Dry run complete. {len(result)} subjects parsed.")
