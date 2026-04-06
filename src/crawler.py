@@ -123,13 +123,18 @@ class MomijiCrawler:
             total_subjects = sum(len(urls) for _, _, urls in subject_batches)
             print(f"Found {len(subject_batches)} faculties and {total_subjects} subject pages.")
 
-            with tqdm(total=total_subjects, desc="Parsing subjects", unit="lecture", dynamic_ncols=True, miniters=1) as bar:
+            with tqdm(total=total_subjects, desc="Parsing subjects", unit="lecture", dynamic_ncols=True, miniters=1, file=sys.stdout) as bar:
+                processed = 0
                 for faculty_url, faculty_name, subject_urls in subject_batches:
                     bar.set_description(f"Parsing {faculty_name}")
                     accepted_count = len(subject_urls)
-                    rejected_count = sum(1 for url, status in self.subject_link_status.items() if status != "accepted" and (url.startswith(faculty_url) or not url.startswith("http")))
-                    tqdm.write(f"Subject URL status for {faculty_url}:")
-                    tqdm.write(f"  Subject candidates: {accepted_count} (accepted {accepted_count}, rejected {rejected_count})")
+                    rejected_count = sum(
+                        1
+                        for url, status in self.subject_link_status.items()
+                        if status != "accepted" and (url.startswith(faculty_url) or not url.startswith("http"))
+                    )
+                    print(f"Subject URL status for {faculty_url}:")
+                    print(f"  Subject candidates: {accepted_count} (accepted {accepted_count}, rejected {rejected_count})")
                     parsed_count_before = len(result)
 
                     for subject_url in subject_urls:
@@ -139,12 +144,14 @@ class MomijiCrawler:
                             subject = await self.process_subject(subject_url, faculty_name)
                             result[subject.code] = subject
                         except Exception as e:
-                            tqdm.write(f"Failed to process {subject_url}: {e}")
+                            print(f"Failed to process {subject_url}: {e}")
+                        processed += 1
                         bar.update(1)
-                        bar.refresh()
+                        sys.stdout.write(f"\rProcessed {processed}/{total_subjects} subjects")
+                        sys.stdout.flush()
 
                     parsed_count_after = len(result)
-                    tqdm.write(f"  Parsed subjects for {faculty_name}: {parsed_count_after - parsed_count_before}")
+                    print(f"\n  Parsed subjects for {faculty_name}: {parsed_count_after - parsed_count_before}")
                     if max_subjects > 0 and len(result) >= max_subjects:
                         break
 
