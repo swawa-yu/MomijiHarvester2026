@@ -196,6 +196,7 @@ class MomijiCrawler:
                 unique_subjects = unique_subjects[:max_subjects]
 
             subject_sources = {}
+            failures = []
             with tqdm(total=len(unique_subjects), desc="Parsing subjects", unit="lecture", dynamic_ncols=True, miniters=1, file=sys.stdout) as bar:
                 for processed, (subject_url, faculty_name) in enumerate(
                         unique_subjects, start=1):
@@ -204,6 +205,7 @@ class MomijiCrawler:
                         subject = await self.process_subject(subject_url, faculty_name)
                     except Exception as e:
                         print(f"Failed to process {subject_url}: {e}")
+                        failures.append((subject_url, e))
                     else:
                         if subject.code in result:
                             previous_url, previous_faculty = subject_sources[
@@ -224,6 +226,17 @@ class MomijiCrawler:
                         f"\rProcessed {processed}/{len(unique_subjects)} subjects"
                     )
                     sys.stdout.flush()
+
+            if failures:
+                representative_urls = ", ".join(
+                    url for url, _ in failures[:5]
+                )
+                raise RuntimeError(
+                    "Incomplete crawl: "
+                    f"{len(failures)} of {len(unique_subjects)} planned detail "
+                    "URLs failed; no outputs were updated. "
+                    f"Representative URLs: {representative_urls}"
+                )
 
             output_path = self.exporter.export(
                 result,

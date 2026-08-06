@@ -3,7 +3,9 @@ import hashlib
 import json
 from pathlib import Path
 
+import httpx
 import pytest
+from src.client import HttpClient
 from src.crawler import MomijiCrawler
 from src.exporter import Exporter
 from src.parser import Parser
@@ -316,4 +318,97 @@ async def test_include_english_fails_before_network_or_output(tmp_path: Path):
         await crawler.run()
 
     assert crawler.fetch_order == []
+    assert not output_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_incomplete_detail_crawl_preserves_existing_generation(
+        tmp_path: Path):
+    base_url = "https://example.test/syllabus/"
+    output_dir = tmp_path / "output"
+    baseline_responses = preflight_responses(base_url)
+    baseline = MemoryCrawler(base_url, output_dir, baseline_responses)
+    await baseline.run(max_subjects=2)
+    before = {
+        path.name: path.read_bytes()
+        for path in output_dir.iterdir()
+    }
+
+    failing_url = base_url + "2026_AA_10000101.html"
+    failing_responses = preflight_responses(base_url)
+    failing_responses[failing_url] = httpx.ReadTimeout("final timeout")
+    crawler = MemoryCrawler(base_url, output_dir, failing_responses)
+
+    with pytest.raises(RuntimeError, match="Incomplete crawl") as error:
+        await crawler.run(max_subjects=2)
+
+    assert "1 of 2 planned detail URLs failed" in str(error.value)
+    assert failing_url in str(error.value)
+    assert {
+        path.name: path.read_bytes()
+        for path in output_dir.iterdir()
+    } == before
+
+
+@pytest.mark.asyncio
+async def test_transient_detail_http_failure_recovers_and_publishes(tmp_path: Path):
+    base_url = "https://example.test/syllabus/"
+    output_dir = tmp_path / "output"
+    faculty_url = base_url + "2026_AA.html"
+    detail_url = base_url + "2026_AA_10000100.html"
+    response_bodies = {
+        base_url: top_page("2026_AA.html"),
+        faculty_url: faculty_page("2026_AA_10000100.html"),
+        detail_url: subject_page("2026", "10000100"),
+    }
+    attempts = {}
+    retry_delays = []
+
+    async def handler(request):
+        url = str(request.url)
+        attempts[url] = attempts.get(url, 0) + 1
+        if url == detail_url and attempts[url] == 1:
+            return httpx.Response(503, request=request)
+        return httpx.Response(200, text=response_bodies[url], request=request)
+
+    async def retry_sleep(delay):
+        retry_delays.append(delay)
+
+    crawler = MomijiCrawler(base_url=base_url, output_dir=str(output_dir))
+    await crawler.client.close()
+    crawler.config.rate_limit_seconds = 0
+    crawler.client = HttpClient(
+        crawler.config,
+        sleep=retry_sleep,
+        transport=httpx.MockTransport(handler),
+    )
+
+    await crawler.run(max_subjects=0)
+
+    assert attempts[detail_url] == 2
+    assert retry_delays == [crawler.config.retry_initial_delay_seconds]
+    assert (output_dir / "subjectDataManifest.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_parser_failure_is_not_retried_and_blocks_output(
+        tmp_path: Path, monkeypatch):
+    base_url = "https://example.test/syllabus/"
+    output_dir = tmp_path / "output"
+    detail_url = base_url + "2026_AA_10000100.html"
+    responses = {
+        base_url: top_page("2026_AA.html"),
+        base_url + "2026_AA.html": faculty_page("2026_AA_10000100.html"),
+        detail_url: subject_page("2026", "10000100"),
+    }
+    crawler = MemoryCrawler(base_url, output_dir, responses)
+
+    def fail_parse(*args, **kwargs):
+        raise ValueError("malformed detail page")
+
+    monkeypatch.setattr(Parser, "parse_subject_page", fail_parse)
+    with pytest.raises(RuntimeError, match="Incomplete crawl"):
+        await crawler.run(max_subjects=0)
+
+    assert crawler.fetch_order.count(detail_url) == 1
     assert not output_dir.exists()
