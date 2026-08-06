@@ -15,7 +15,6 @@ from src.models import SubjectDetails
 class Exporter:
     def __init__(self, output_dir: str = "output"):
         self.output_dir = output_dir
-        Path(self.output_dir).mkdir(parents=True, exist_ok=True)
 
     def export(
         self,
@@ -170,6 +169,7 @@ class Exporter:
     @staticmethod
     def _atomic_write(path: str, payload: bytes) -> None:
         destination = Path(path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
         temporary = None
         try:
             with tempfile.NamedTemporaryFile(

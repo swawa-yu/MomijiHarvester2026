@@ -16,7 +16,10 @@ def run(
     ),
     output_dir: str = typer.Option("output", help="JSON出力ディレクトリ"),
     max_subjects: int = typer.Option(20, help="取得上限(0は無制限; デフォルト20)"),
-    include_english: bool = typer.Option(False, help="英語版（_en）リンクも対象にする"),
+    include_english: bool = typer.Option(
+        False,
+        help="現在未対応。英語版は将来、英語版トップを起点に別契約で取得する",
+    ),
     dry_run: bool = typer.Option(False, help="実際の出力を行わずに動作確認する"),
 ) -> None:
     crawler = MomijiCrawler(base_url=base_url, output_dir=output_dir, include_english=include_english)

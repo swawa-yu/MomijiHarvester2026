@@ -43,6 +43,15 @@ def departments():
     }
 
 
+def test_exporter_creates_output_directory_only_when_exporting(tmp_path: Path):
+    output_dir = tmp_path / "not-created" / "nested-output"
+    exporter = Exporter(str(output_dir))
+
+    assert not output_dir.exists()
+    exporter.export({"10000100": subject()})
+    assert output_dir.exists()
+
+
 @pytest.mark.parametrize("year", ["2025年度", "2026年度"])
 def test_exporter_writes_contract_and_manifest(tmp_path: Path, year: str):
     path = Exporter(str(tmp_path)).export(
