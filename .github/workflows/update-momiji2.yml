@@ -2,6 +2,15 @@ name: Create guarded momiji2 data update
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Select a no-crawl consumer check or the complete update
+        required: true
+        default: consumer-preflight
+        type: choice
+        options:
+          - consumer-preflight
+          - full
 
 permissions:
   contents: read
@@ -33,6 +42,7 @@ jobs:
             tests/test_generation_artifacts.py
 
       - name: Crawl the complete Japanese syllabus
+        if: inputs.mode == 'full'
         id: crawl
         run: |
           output_dir="$RUNNER_TEMP/harvester-output"
@@ -66,7 +76,13 @@ jobs:
           pnpm exec tsc --noEmit
           pnpm prebuild
 
+      - name: Complete the no-crawl consumer preflight
+        if: inputs.mode == 'consumer-preflight'
+        run: |
+          echo "Consumer preflight passed without crawling or creating a pull request."
+
       - name: Determine deterministic target branch
+        if: inputs.mode == 'full'
         id: target
         env:
           YEAR: ${{ steps.crawl.outputs.year }}
@@ -82,6 +98,7 @@ jobs:
           fi
 
       - name: Stop when consumer already has this exact generation
+        if: inputs.mode == 'full'
         id: current
         working-directory: ${{ runner.temp }}/momiji2
         env:
@@ -113,7 +130,7 @@ jobs:
           fi
 
       - name: Check the Harvester generation and require zero review findings
-        if: steps.current.outputs.already_current != 'true'
+        if: inputs.mode == 'full' && steps.current.outputs.already_current != 'true'
         working-directory: ${{ runner.temp }}/momiji2
         env:
           MANIFEST_PATH: ${{ steps.crawl.outputs.manifest_path }}
@@ -134,7 +151,7 @@ jobs:
           NODE
 
       - name: Import, generate, and verify the consumer update
-        if: steps.current.outputs.already_current != 'true'
+        if: inputs.mode == 'full' && steps.current.outputs.already_current != 'true'
         working-directory: ${{ runner.temp }}/momiji2
         env:
           MANIFEST_PATH: ${{ steps.crawl.outputs.manifest_path }}
@@ -162,7 +179,7 @@ jobs:
           pnpm exec vite build --outDir "$RUNNER_TEMP/momiji2-vite"
 
       - name: Verify an existing branch has the same generation
-        if: steps.current.outputs.already_current != 'true' && steps.target.outputs.branch_exists == 'true'
+        if: inputs.mode == 'full' && steps.current.outputs.already_current != 'true' && steps.target.outputs.branch_exists == 'true'
         working-directory: ${{ runner.temp }}/momiji2
         env:
           BRANCH: ${{ steps.target.outputs.branch }}
@@ -200,7 +217,7 @@ jobs:
           pnpm exec vite build --outDir "$RUNNER_TEMP/momiji2-existing-vite"
 
       - name: Create a scoped momiji2 App token
-        if: steps.current.outputs.already_current != 'true'
+        if: inputs.mode == 'full' && steps.current.outputs.already_current != 'true'
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
@@ -212,7 +229,7 @@ jobs:
           permission-pull-requests: write
 
       - name: Reuse an open matching pull request
-        if: steps.current.outputs.already_current != 'true' && steps.target.outputs.branch_exists == 'true'
+        if: inputs.mode == 'full' && steps.current.outputs.already_current != 'true' && steps.target.outputs.branch_exists == 'true'
         id: existing-pr
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -228,7 +245,7 @@ jobs:
           fi
 
       - name: Stop for a previously closed matching pull request
-        if: steps.current.outputs.already_current != 'true' && steps.target.outputs.branch_exists == 'true' && steps.existing-pr.outputs.open_pr != 'true'
+        if: inputs.mode == 'full' && steps.current.outputs.already_current != 'true' && steps.target.outputs.branch_exists == 'true' && steps.existing-pr.outputs.open_pr != 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           BRANCH: ${{ steps.target.outputs.branch }}
@@ -242,7 +259,7 @@ jobs:
           fi
 
       - name: Commit and push a new update branch
-        if: steps.current.outputs.already_current != 'true' && steps.target.outputs.branch_exists != 'true'
+        if: inputs.mode == 'full' && steps.current.outputs.already_current != 'true' && steps.target.outputs.branch_exists != 'true'
         working-directory: ${{ runner.temp }}/momiji2
         env:
           BRANCH: ${{ steps.target.outputs.branch }}
@@ -269,7 +286,7 @@ jobs:
           unset auth
 
       - name: Create the consumer update pull request
-        if: steps.current.outputs.already_current != 'true' && (steps.target.outputs.branch_exists != 'true' || steps.existing-pr.outputs.open_pr != 'true')
+        if: inputs.mode == 'full' && steps.current.outputs.already_current != 'true' && (steps.target.outputs.branch_exists != 'true' || steps.existing-pr.outputs.open_pr != 'true')
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           BRANCH: ${{ steps.target.outputs.branch }}
