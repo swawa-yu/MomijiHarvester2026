@@ -1,0 +1,293 @@
+name: Create guarded momiji2 data update
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: harvester-to-momiji2-update
+  cancel-in-progress: false
+
+jobs:
+  update-consumer:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install and test Harvester
+        run: |
+          python -m pip install --upgrade pip uv flake8
+          uv venv
+          uv pip install -r requirements.txt
+          PYTHONPATH=. uv run pytest -q
+          uv run flake8 src tests scripts
+
+      - name: Crawl the complete Japanese syllabus
+        id: crawl
+        run: |
+          output_dir="$RUNNER_TEMP/harvester-output"
+          mkdir "$output_dir"
+          uv run python -m src.main run --output-dir "$output_dir" --max-subjects 0
+          python scripts/resolve_generation_artifacts.py \
+            --output-dir "$output_dir" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Clone the public consumer integration branch
+        run: |
+          git clone --branch develop \
+            https://github.com/swawa-yu/momiji2.git "$RUNNER_TEMP/momiji2"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up Node and consumer dependencies
+        working-directory: ${{ runner.temp }}/momiji2
+        run: |
+          npm install -g pnpm@10
+          pnpm install --frozen-lockfile
+
+      - name: Validate the active consumer baseline
+        working-directory: ${{ runner.temp }}/momiji2
+        run: |
+          pnpm validate:data
+          pnpm check:subject-constants
+          pnpm exec tsc --noEmit
+          pnpm prebuild
+
+      - name: Determine deterministic target branch
+        id: target
+        env:
+          YEAR: ${{ steps.crawl.outputs.year }}
+          SHA256: ${{ steps.crawl.outputs.data_sha256 }}
+        run: |
+          branch="automation/harvester-${YEAR}-${SHA256:0:12}"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --heads \
+            https://github.com/swawa-yu/momiji2.git "refs/heads/$branch"; then
+            echo "branch_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "branch_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stop when consumer already has this exact generation
+        id: current
+        working-directory: ${{ runner.temp }}/momiji2
+        env:
+          DATA_FILE: ${{ steps.crawl.outputs.data_file }}
+          DATA_SHA256: ${{ steps.crawl.outputs.data_sha256 }}
+        run: |
+          if python - "$DATA_FILE" "$DATA_SHA256" <<'PY'
+          import hashlib
+          import json
+          import sys
+          from pathlib import Path
+
+          data_file, expected_sha256 = sys.argv[1:]
+          manifest_path = Path("data/subjectDataManifest.json")
+          data_path = Path("data") / data_file
+          try:
+              manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          except (OSError, json.JSONDecodeError):
+              raise SystemExit(1)
+          if manifest.get("dataFile") != data_file or not data_path.is_file():
+              raise SystemExit(1)
+          if hashlib.sha256(data_path.read_bytes()).hexdigest() != expected_sha256:
+              raise SystemExit(1)
+          PY
+          then
+            echo "already_current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_current=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check the Harvester generation and require zero review findings
+        if: steps.current.outputs.already_current != 'true'
+        working-directory: ${{ runner.temp }}/momiji2
+        env:
+          MANIFEST_PATH: ${{ steps.crawl.outputs.manifest_path }}
+          DEPARTMENTS_PATH: ${{ steps.crawl.outputs.departments_path }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { importHarvesterGeneration } from './scripts/import-harvester-generation.mjs';
+
+          const result = await importHarvesterGeneration({
+            manifestPath: process.env.MANIFEST_PATH,
+            departmentsPath: process.env.DEPARTMENTS_PATH,
+            check: true,
+          });
+          if (result.guardReport.hardFailures.length || result.guardReport.review.length) {
+            throw new Error(`Update guard did not clear: ${JSON.stringify(result.guardReport)}`);
+          }
+          console.log(JSON.stringify(result.guardReport, null, 2));
+          NODE
+
+      - name: Import, generate, and verify the consumer update
+        if: steps.current.outputs.already_current != 'true'
+        working-directory: ${{ runner.temp }}/momiji2
+        env:
+          MANIFEST_PATH: ${{ steps.crawl.outputs.manifest_path }}
+          DEPARTMENTS_PATH: ${{ steps.crawl.outputs.departments_path }}
+          DATA_FILE: ${{ steps.crawl.outputs.data_file }}
+        run: |
+          pnpm import:harvester-generation --manifest "$MANIFEST_PATH" --departments "$DEPARTMENTS_PATH"
+          pnpm generate:subject-constants
+          pnpm validate:data
+          pnpm check:subject-constants
+          pnpm test:update-guard
+          pnpm test:import-harvester-generation
+          pnpm test:subject-constants
+          pnpm test:data-validator
+          pnpm test:raw-subject-contract
+          pnpm exec tsc --noEmit
+          pnpm prebuild
+          python "$GITHUB_WORKSPACE/scripts/validate_consumer_update_diff.py" \
+            --consumer . --data-file "$DATA_FILE"
+          git add --intent-to-add -- "data/$DATA_FILE" \
+            data/subjectDataManifest.json data/department_constants.json \
+            data/derivedSubjectConstants.json src/types/subjectConstants.ts \
+            src/subject/activeSubjectData.ts src/types/rawSubjectProperties.ts
+          git diff --check
+          pnpm exec vite build --outDir "$RUNNER_TEMP/momiji2-vite"
+
+      - name: Verify an existing branch has the same generation
+        if: steps.current.outputs.already_current != 'true' && steps.target.outputs.branch_exists == 'true'
+        working-directory: ${{ runner.temp }}/momiji2
+        env:
+          BRANCH: ${{ steps.target.outputs.branch }}
+          DATA_FILE: ${{ steps.crawl.outputs.data_file }}
+          DATA_SHA256: ${{ steps.crawl.outputs.data_sha256 }}
+          MANIFEST_PATH: ${{ steps.crawl.outputs.manifest_path }}
+        run: |
+          git fetch origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+          git cat-file -e "origin/$BRANCH:data/$DATA_FILE"
+          git show "origin/$BRANCH:data/$DATA_FILE" > "$RUNNER_TEMP/existing-generation.json"
+          test "$(sha256sum "$RUNNER_TEMP/existing-generation.json" | cut -d ' ' -f 1)" = "$DATA_SHA256"
+          git show "origin/$BRANCH:data/subjectDataManifest.json" > "$RUNNER_TEMP/existing-manifest.json"
+          python - "$MANIFEST_PATH" "$RUNNER_TEMP/existing-manifest.json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as source:
+              expected = json.load(source)
+          with open(sys.argv[2], encoding="utf-8") as source:
+              actual = json.load(source)
+          fields = ("dataFile", "academicYear", "retrievedAt", "subjectCount", "source")
+          if any(actual.get(field) != expected.get(field) for field in fields):
+              raise SystemExit("existing branch manifest does not match the incoming generation")
+          PY
+          python "$GITHUB_WORKSPACE/scripts/validate_consumer_update_diff.py" \
+            --consumer . --data-file "$DATA_FILE" \
+            --base-ref origin/develop --head-ref "origin/$BRANCH"
+          git worktree add --detach "$RUNNER_TEMP/momiji2-existing" "origin/$BRANCH"
+          cd "$RUNNER_TEMP/momiji2-existing"
+          pnpm install --frozen-lockfile
+          pnpm validate:data
+          pnpm check:subject-constants
+          pnpm exec tsc --noEmit
+          pnpm prebuild
+          pnpm exec vite build --outDir "$RUNNER_TEMP/momiji2-existing-vite"
+
+      - name: Create a scoped momiji2 App token
+        if: steps.current.outputs.already_current != 'true'
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.MOMIJI2_UPDATER_CLIENT_ID }}
+          private-key: ${{ secrets.MOMIJI2_UPDATER_PRIVATE_KEY }}
+          owner: swawa-yu
+          repositories: momiji2
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Reuse an open matching pull request
+        if: steps.current.outputs.already_current != 'true' && steps.target.outputs.branch_exists == 'true'
+        id: existing-pr
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ steps.target.outputs.branch }}
+        run: |
+          url="$(gh pr list --repo swawa-yu/momiji2 --base develop --head "$BRANCH" \
+            --state open --json url --jq '.[0].url')"
+          if test -n "$url"; then
+            echo "open_pr=true" >> "$GITHUB_OUTPUT"
+            echo "Existing pull request: $url"
+          else
+            echo "open_pr=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stop for a previously closed matching pull request
+        if: steps.current.outputs.already_current != 'true' && steps.target.outputs.branch_exists == 'true' && steps.existing-pr.outputs.open_pr != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ steps.target.outputs.branch }}
+        run: |
+          url="$(gh pr list --repo swawa-yu/momiji2 --base develop --head "$BRANCH" \
+            --state closed --json url --jq '.[0].url')"
+          if test -n "$url"; then
+            echo "A matching pull request was previously closed: $url" >&2
+            echo "Resolve it manually; this workflow will not reopen or replace it." >&2
+            exit 1
+          fi
+
+      - name: Commit and push a new update branch
+        if: steps.current.outputs.already_current != 'true' && steps.target.outputs.branch_exists != 'true'
+        working-directory: ${{ runner.temp }}/momiji2
+        env:
+          BRANCH: ${{ steps.target.outputs.branch }}
+          YEAR: ${{ steps.crawl.outputs.year }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          git switch -c "$BRANCH"
+          bot_id="$(GH_TOKEN="$APP_TOKEN" gh api "/users/${APP_SLUG}%5Bbot%5D" --jq .id)"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          git add -- "data/${{ steps.crawl.outputs.data_file }}" \
+            data/subjectDataManifest.json data/department_constants.json \
+            data/derivedSubjectConstants.json src/types/subjectConstants.ts \
+            src/subject/activeSubjectData.ts src/types/rawSubjectProperties.ts
+          git diff --cached --check
+          git diff --cached --quiet && { echo 'No consumer changes to commit.'; exit 1; }
+          git commit -m "data: import ${YEAR} syllabus generation"
+          auth="$(printf 'x-access-token:%s' "$APP_TOKEN" | base64 | tr -d '\n')"
+          GIT_CONFIG_COUNT=1 \
+            GIT_CONFIG_KEY_0='http.https://github.com/.extraheader' \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            git push origin "$BRANCH"
+          unset auth
+
+      - name: Create the consumer update pull request
+        if: steps.current.outputs.already_current != 'true' && (steps.target.outputs.branch_exists != 'true' || steps.existing-pr.outputs.open_pr != 'true')
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ steps.target.outputs.branch }}
+          YEAR: ${{ steps.crawl.outputs.year }}
+          RETRIEVED_AT: ${{ steps.crawl.outputs.retrieved_at }}
+          SUBJECT_COUNT: ${{ steps.crawl.outputs.subject_count }}
+          DATA_SHA256: ${{ steps.crawl.outputs.data_sha256 }}
+        run: |
+          body_path="$RUNNER_TEMP/momiji2-update-pr.md"
+          cat > "$body_path" <<EOF
+          Automated manual-run import from MomijiHarvester2026.
+
+          - Academic year: ${YEAR}
+          - Retrieved at: ${RETRIEVED_AT}
+          - Subject count: ${SUBJECT_COUNT}
+          - Subject SHA-256: ${DATA_SHA256}
+          - Update guard: zero hard failures and zero review findings
+
+          This workflow never uses --accept-review and never merges this PR.
+          EOF
+          gh pr create --repo swawa-yu/momiji2 --base develop --head "$BRANCH" \
+            --title "data: import ${YEAR} syllabus generation" \
+            --body-file "$body_path"

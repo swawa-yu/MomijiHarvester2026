@@ -54,7 +54,7 @@ uv run python -m src.main list-departments
 
 HTTP 429、HTTP 5xx、タイムアウト・通信エラーだけを最大3回再試行します。待機は0.5秒から指数的に増やして最大4秒とし、常に通常のリクエスト間隔以上を確保します。429・5xxに有効な `Retry-After`（秒数またはHTTP-date）があればそれ以上待機しますが、安全上限は60秒です。無効または過去の値は無視します。その他のHTTP 4xxは再試行しません。予定した詳細ページが最終的に1件でも取得・解析できなかった場合、その実行は不完全として成果物を更新しません。`--max-subjects` で限定した開発用実行も、限定範囲の全件成功時だけ出力します。
 
-サービス公開開始時の問い合わせ確認と、定期化までの安全境界は [CRAWL_POLICY.md](CRAWL_POLICY.md) に記録しています。`robots.txt` の許可だけをデータ再配布の根拠にはせず、事前集計・rate limit・完全性検証・段階的な自動化を維持します。
+サービス公開開始時の問い合わせ確認と、定期化までの安全境界は [CRAWL_POLICY.md](CRAWL_POLICY.md) に記録しています。`robots.txt` の許可だけをデータ再配布の根拠にはせず、事前集計・rate limit・完全性検証・段階的な自動化を維持します。`Create guarded momiji2 data update` は手動起動だけで、検証済み生成物から`momiji2`の確認用PRを作成します。GitHub Appの秘密鍵はActions secret `MOMIJI2_UPDATER_PRIVATE_KEY`、Client IDはActions variable `MOMIJI2_UPDATER_CLIENT_ID`として管理し、値をリポジトリへ保存しません。
 
 `--include-english` は現在未対応で、通信開始前にエラー終了します。日本語版と英語版は同じ講義コードを持ち得るため混在させません。英語版は将来、英語版トップページを起点とする独立クロールと専用の出力契約として対応します。
 

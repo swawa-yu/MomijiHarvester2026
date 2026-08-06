@@ -38,6 +38,12 @@
 - rate limit、Retry-After、限定retry、全件成功時だけのpublishを維持する。
 - 取得データの年度、取得日、件数、生成元を記録し、出典を明示する。
 - 異常な件数差、未知の契約、未分類値があれば自動更新を止める。
+- `workflow_dispatch` の手動更新は、全件クロール、成果物契約、consumer側の更新guard、
+  型・生成物検証をすべて通過した場合だけ確認用PRを作成する。review判定を自動承認せず、
+  直接merge・schedule・deployは行わない。
+- consumerへの書込みには、対象リポジトリだけへ導入したGitHub Appの短命トークンを使う。
+  秘密鍵はActions secret `MOMIJI2_UPDATER_PRIVATE_KEY`、Client IDはActions variable
+  `MOMIJI2_UPDATER_CLIENT_ID`として管理し、鍵・トークンをリポジトリに保存しない。
 - scheduleは手動起動の更新PRが複数回安定した後に有効化する。
 
 ## 参照先
