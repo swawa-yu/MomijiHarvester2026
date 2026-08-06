@@ -43,6 +43,33 @@ class Parser:
         def normalize_label(key: str) -> str:
             return key.replace(" ", "").replace("\u3000", "").replace("\n", "").replace("<BR>", "").strip()
 
+        known_headers = {
+            "年度", "開講部局", "講義コード", "科目区分", "授業科目名",
+            "担当教員名", "開講キャンパス", "開設期", "曜日・時限・講義室",
+            "単位", "使用言語", "学習の段階", "対象学生", "授業の目標・概要等",
+            "予習・復習への アドバイス", "履修上の注意 受講条件等", "メッセージ",
+            "その他",
+            # These legacy fields are present in the source page but are not
+            # part of the subject JSON contract.
+            "授業科目名 （フリガナ）", "英文授業科目名", "担当教員名 (フリガナ)",
+            "授業の方法", "授業の方法 【詳細情報】", "週時間", "学問分野（分科）",
+            "学問分野（分野）", "学習の成果", "成績評価の基準等", "授業計画",
+            "教科書・参考書等", "教養教育での この授業の位置づけ", "教職専門科目",
+            "教科専門科目", "実務経験", "実務経験の概要と それに基づく授業内容",
+            "授業で使用する メディア・機器等", "授業で取り入れる 学習手法",
+            "授業のキーワード", "【詳細情報】", "English",
+        }
+        unknown_headers = sorted(
+            label for label in raw
+            if normalize_label(label) not in {normalize_label(h) for h in known_headers}
+        )
+        if unknown_headers:
+            raise ValueError(
+                "Unknown subject header(s) "
+                f"{', '.join(repr(header) for header in unknown_headers)} "
+                f"in {base_url}"
+            )
+
         def find_value(expected: str, alternates=None):
             alternates = alternates or []
             normalized_expected = normalize_label(expected)

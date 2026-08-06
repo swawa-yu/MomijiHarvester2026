@@ -351,6 +351,35 @@ async def test_incomplete_detail_crawl_preserves_existing_generation(
 
 
 @pytest.mark.asyncio
+async def test_unknown_subject_header_preserves_existing_generation(
+        tmp_path: Path):
+    base_url = "https://example.test/syllabus/"
+    output_dir = tmp_path / "output"
+    baseline = MemoryCrawler(base_url, output_dir, preflight_responses(base_url))
+    await baseline.run(max_subjects=2)
+    before = {
+        path.name: path.read_bytes()
+        for path in output_dir.iterdir()
+    }
+
+    failing_responses = preflight_responses(base_url)
+    failing_url = base_url + "2026_AA_10000101.html"
+    failing_responses[failing_url] = subject_page("2026", "10000101").replace(
+        "<th>年度</th>", "<th>未知ヘッダー</th>")
+    crawler = MemoryCrawler(base_url, output_dir, failing_responses)
+
+    with pytest.raises(RuntimeError, match="Incomplete crawl") as error:
+        await crawler.run(max_subjects=2)
+
+    assert "未知ヘッダー" in str(error.value)
+    assert failing_url in str(error.value)
+    assert {
+        path.name: path.read_bytes()
+        for path in output_dir.iterdir()
+    } == before
+
+
+@pytest.mark.asyncio
 async def test_transient_detail_http_failure_recovers_and_publishes(tmp_path: Path):
     base_url = "https://example.test/syllabus/"
     output_dir = tmp_path / "output"

@@ -228,14 +228,14 @@ class MomijiCrawler:
                     sys.stdout.flush()
 
             if failures:
-                representative_urls = ", ".join(
-                    url for url, _ in failures[:5]
+                representative_failures = "; ".join(
+                    f"{url}: {error}" for url, error in failures[:5]
                 )
                 raise RuntimeError(
                     "Incomplete crawl: "
                     f"{len(failures)} of {len(unique_subjects)} planned detail "
                     "URLs failed; no outputs were updated. "
-                    f"Representative URLs: {representative_urls}"
+                    f"Representative failures: {representative_failures}"
                 )
 
             output_path = self.exporter.export(
