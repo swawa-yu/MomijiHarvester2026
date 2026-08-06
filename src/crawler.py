@@ -164,7 +164,9 @@ class MomijiCrawler:
                 return
 
             lang_tag = "_en" if self.include_english else ""
-            output_path = self.exporter.export(result, lang_tag=lang_tag)
+            output_path = self.exporter.export(
+                result, lang_tag=lang_tag, source=self.config.base_url
+            )
             print(f"Exported {len(result)} subjects to {output_path}")
         finally:
             await self.client.close()

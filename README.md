@@ -6,6 +6,7 @@
 
 - 学部/授業ページを順にたどり、科目詳細データを取得
 - `subject_details_main_<YYYY-MM-DD>.json`形式で保存
+- 同じ出力ディレクトリにmomiji2互換の`subjectDataManifest.json`も保存
 - 今後GitHub Actionsによる定期実行を想定
 
 ## 機能
