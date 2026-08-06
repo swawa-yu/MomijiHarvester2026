@@ -5,7 +5,7 @@
 ## 目的
 
 - 学部/授業ページを順にたどり、科目詳細データを取得
-- `subject_details_main_<YYYY-MM-DD>.json`形式で保存
+- 検証済みJSONを`subject_details_main_<YYYY-MM-DD>[_<lang>]_<sha256>.json`形式で世代別保存
 - 同じ出力ディレクトリにmomiji2互換の`subjectDataManifest.json`も保存
 - 今後GitHub Actionsによる定期実行を想定
 
@@ -13,7 +13,7 @@
 
 1. トップページ -> 学部ページ -> 授業詳細ページのクロール
 2. データ整形とバリデーション（pydantic利用予定）
-3. 出力ファイル名は `subject_details_main_YYYY-MM-DD.json`
+3. 出力ファイル名は内容ハッシュ付きの世代別JSON
 4. rate limit: 0.5秒/リクエスト
 
 ## 開発環境

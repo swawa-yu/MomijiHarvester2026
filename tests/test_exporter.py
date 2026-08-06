@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ from src.exporter import Exporter
 from src.models import SubjectDetails
 
 FIELDS = {
+    # Independent copy of momiji2's RawSubject contract (19 aliases).
     "relative URL", "年度", "開講部局", "講義コード", "科目区分",
     "授業科目名", "担当教員名", "開講キャンパス", "開設期",
     "曜日・時限・講義室", "単位", "使用言語", "学習の段階",
@@ -17,7 +19,9 @@ FIELDS = {
 
 def subject(code="10000100", year="2026年度"):
     values = {field: "value" for field in FIELDS}
-    values.update({"relative URL": f"{year[:4]}_AA_{code}.html", "年度": year, "講義コード": code, "その他": ""})
+    values.update(
+        {"relative URL": f"{year[:4]}_AA_{code}.html",
+         "年度": year, "講義コード": code, "その他": ""})
     return SubjectDetails(**values)
 
 
@@ -27,12 +31,17 @@ def read(path):
 
 @pytest.mark.parametrize("year", ["2025年度", "2026年度"])
 def test_exporter_writes_contract_and_manifest(tmp_path: Path, year: str):
-    path = Exporter(str(tmp_path)).export({"10000100": subject(year=year)}, source="https://example.test/syllabus/")
+    path = Exporter(str(tmp_path)).export(
+        {"10000100": subject(year=year),
+         }, source="https://example.test/syllabus/")
     data = read(path)
     manifest = read(tmp_path / "subjectDataManifest.json")
     assert set(data["10000100"]) == FIELDS
     assert data["10000100"]["その他"] == ""
-    assert manifest == {"dataFile": Path(path).name, "academicYear": year, "retrievedAt": manifest["retrievedAt"], "subjectCount": 1, "source": "https://example.test/syllabus/"}
+    assert manifest == {
+        "dataFile": Path(path).name, "academicYear": year,
+        "retrievedAt": manifest["retrievedAt"], "subjectCount": 1,
+        "source": "https://example.test/syllabus/"}
     assert len(manifest["retrievedAt"]) == 10
 
 
@@ -43,7 +52,8 @@ def test_exporter_writes_contract_and_manifest(tmp_path: Path, year: str):
     (lambda x: x.update({"講義コード": "other"}), "course code"),
     (lambda x: x.update({"年度": "2025"}), "年度"),
 ])
-def test_exporter_rejects_invalid_data_without_changing_outputs(tmp_path: Path, mutate, message):
+def test_exporter_rejects_invalid_data_without_changing_outputs(
+        tmp_path: Path, mutate, message):
     exporter = Exporter(str(tmp_path))
     valid = {"10000100": subject()}
     path = exporter.export(valid, source="https://example.test/syllabus/")
@@ -52,15 +62,18 @@ def test_exporter_rejects_invalid_data_without_changing_outputs(tmp_path: Path, 
     broken = subject().model_dump(by_alias=True)
     mutate(broken)
     with pytest.raises(ValueError, match=message):
-        exporter.export({"10000100": broken}, source="https://example.test/syllabus/")
+        exporter.export({"10000100": broken},
+                        source="https://example.test/syllabus/")
     assert (Path(path).read_bytes(), manifest_path.read_bytes()) == before
 
 
 def test_exporter_rejects_mixed_year_empty_and_non_https(tmp_path: Path):
     exporter = Exporter(str(tmp_path))
-    cases = [({}, "empty"), ({"a": subject("a", "2025年度"), "b": subject("b", "2026年度")}, "academic year"), ({"10000100": subject()}, "HTTPS")]
+    cases = [({}, "empty"), ({"a": subject("a", "2025年度"), "b": subject(
+        "b", "2026年度")}, "academic year"), ({"10000100": subject()}, "HTTPS")]
     for data, message in cases:
-        source = "http://example.test/" if message == "HTTPS" else "https://example.test/"
+        source = ("http://example.test/" if message == "HTTPS"
+                  else "https://example.test/")
         with pytest.raises(ValueError, match=message):
             exporter.export(data, source=source)
 
@@ -69,4 +82,64 @@ def test_exporter_uses_official_source_when_omitted(tmp_path: Path):
     path = Exporter(str(tmp_path)).export({"10000100": subject()})
     manifest = read(tmp_path / "subjectDataManifest.json")
     assert manifest["dataFile"] == Path(path).name
-    assert manifest["source"] == "https://momiji.hiroshima-u.ac.jp/syllabusHtml/"
+    assert manifest["source"] == (
+        "https://momiji.hiroshima-u.ac.jp/syllabusHtml/")
+
+
+def test_exporter_manifest_failure_preserves_previous_pointer_and_data(
+        tmp_path: Path, monkeypatch):
+    exporter = Exporter(str(tmp_path))
+    old_path = exporter.export(
+        {"10000100": subject()}, source="https://example.test/")
+    manifest_path = tmp_path / "subjectDataManifest.json"
+    old_data, old_manifest = Path(
+        old_path).read_bytes(), manifest_path.read_bytes()
+    original_replace = os.replace
+
+    def fail_manifest(source, destination):
+        if Path(destination).name == "subjectDataManifest.json":
+            raise OSError("simulated manifest replacement failure")
+        return original_replace(source, destination)
+
+    monkeypatch.setattr("src.exporter.os.replace", fail_manifest)
+    changed = subject().model_copy(update={"title": "changed"})
+    with pytest.raises(OSError, match="manifest"):
+        exporter.export({"10000100": changed}, source="https://example.test/")
+    assert Path(old_path).read_bytes() == old_data
+    assert manifest_path.read_bytes() == old_manifest
+    assert json.loads(manifest_path.read_text(encoding="utf-8")
+                      )["dataFile"] == Path(old_path).name
+    orphan_paths = list(tmp_path.glob("subject_details_main_*.json"))
+    assert len(orphan_paths) == 2
+    assert old_path in {str(path) for path in orphan_paths}
+    assert any(path != Path(old_path) and path.read_bytes()
+               != old_data for path in orphan_paths)
+
+
+def test_exporter_generation_is_collision_safe(tmp_path: Path):
+    exporter = Exporter(str(tmp_path))
+    first = exporter.export({"10000100": subject()},
+                            lang_tag="_en", source="https://example.test/")
+    second = exporter.export({"10000100": subject()},
+                             lang_tag="_en", source="https://example.test/")
+    assert first == second
+    assert Path(first).name.endswith(
+        "_en_" + Path(first).stem.rsplit("_", 1)[-1] + ".json")
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+@pytest.mark.parametrize("lang_tag", ["../bad", "bad/name", "bad\nname"])
+def test_exporter_rejects_unsafe_lang_tag(tmp_path: Path, lang_tag: str):
+    with pytest.raises(ValueError, match="lang_tag"):
+        Exporter(str(tmp_path)).export(
+            {"10000100": subject()}, lang_tag=lang_tag)
+
+
+def test_exporter_rejects_invalid_source_and_subject_container(tmp_path: Path):
+    exporter = Exporter(str(tmp_path))
+    with pytest.raises(ValueError, match="HTTPS"):
+        exporter.export({"10000100": subject()}, source="https://")
+    with pytest.raises(ValueError, match="mapping"):
+        exporter.export([("10000100", subject())])
+    with pytest.raises(ValueError, match="mapping"):
+        exporter.export({"10000100": object()})
