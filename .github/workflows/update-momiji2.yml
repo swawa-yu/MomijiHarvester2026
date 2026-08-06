@@ -55,7 +55,7 @@ jobs:
       - name: Set up Node and consumer dependencies
         working-directory: ${{ runner.temp }}/momiji2
         run: |
-          npm install -g pnpm@10
+          npm install -g pnpm@8.12.1
           pnpm install --frozen-lockfile
 
       - name: Validate the active consumer baseline
