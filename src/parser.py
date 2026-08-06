@@ -80,3 +80,41 @@ class Parser:
         }
 
         return SubjectDetails(**{k: v for k, v in data.items() if v is not None})
+
+    @staticmethod
+    def _extract_department_names_from_group(img):
+        names = []
+        for node in img.next_siblings:
+            if getattr(node, "name", None) == "img" and node.get("src", "").endswith("syllabus_list.gif"):
+                break
+            if getattr(node, "name", None) == "a":
+                text = node.get_text(" ", strip=True)
+                if text:
+                    names.append(text)
+        return names
+
+    @staticmethod
+    def parse_department_lists(html: str) -> dict[str, list[str]]:
+        soup = Parser.get_html_soup(html)
+        result = {
+            "kaikouBukyokuGakubus": [],
+            "kaikouBukyokuDaigakuins": [],
+        }
+        seen_gakubu = set()
+        seen_daigakuin = set()
+
+        for img in soup.select('img[src*="syllabus_list.gif"]'):
+            prev_font = img.find_previous("font")
+            is_daigakuin = bool(prev_font and "大学院" in prev_font.get_text(strip=True))
+            names = Parser._extract_department_names_from_group(img)
+            for name in names:
+                if is_daigakuin:
+                    if name not in seen_daigakuin:
+                        seen_daigakuin.add(name)
+                        result["kaikouBukyokuDaigakuins"].append(name)
+                else:
+                    if name not in seen_gakubu:
+                        seen_gakubu.add(name)
+                        result["kaikouBukyokuGakubus"].append(name)
+
+        return result

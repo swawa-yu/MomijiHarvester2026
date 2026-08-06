@@ -45,3 +45,15 @@ async def test_collect_subject_urls_from_faculty_sample():
 
     assert "https://momiji.hiroshima-u.ac.jp/syllabusHtml/2026_AA_10000100.html" in subject_links
     assert "https://momiji.hiroshima-u.ac.jp/syllabusHtml/2026_AA_10000103.html" in subject_links
+
+
+@pytest.mark.asyncio
+async def test_collect_department_lists_from_index_sample():
+    crawler = LocalFileCrawler(
+        base_url="https://momiji.hiroshima-u.ac.jp/syllabusHtml/",
+        sample_root=Path("tests/sample"),
+    )
+
+    departments = await crawler.collect_department_lists()
+    assert "教養教育" in departments["kaikouBukyokuGakubus"]
+    assert "大学院共通教育（博士課程前期）" in departments["kaikouBukyokuDaigakuins"]

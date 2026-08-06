@@ -36,6 +36,14 @@ uv install -r requirements.txt
 uv run python -m src.main
 ```
 
+開講部局一覧を出力する場合:
+
+```bash
+uv run python -m src.main list-departments
+```
+
+デフォルトでは `output/department_constants.json` に `kaikouBukyokuGakubus` と `kaikouBukyokuDaigakuins` を出力します。
+
 ※ 実装後に詳細を調整します。
 
 ## テスト

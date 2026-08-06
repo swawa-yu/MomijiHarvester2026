@@ -41,3 +41,16 @@ def test_parse_subject_page_with_actual_sample():
     assert "受講または授業動画視聴前に" in obj["予習・復習への アドバイス"]
     assert "第1章、12章、15章" in obj["履修上の注意 受講条件等"]
     assert "今、みなさんは" in obj["メッセージ"]
+
+
+def test_parse_department_lists_from_index_sample():
+    html = Path("tests/sample/index.html").read_text(encoding="utf-8")
+    departments = Parser.parse_department_lists(html)
+
+    assert departments["kaikouBukyokuGakubus"][0] == "教養教育"
+    assert "総合科学部総合科学科" in departments["kaikouBukyokuGakubus"]
+    assert "法学部法学科夜間主コース" in departments["kaikouBukyokuGakubus"]
+    assert "法学部" not in departments["kaikouBukyokuGakubus"]
+    assert departments["kaikouBukyokuDaigakuins"][0] == "大学院共通教育（博士課程前期）"
+    assert "人間社会科学研究科博士課程前期人文社会科学専攻人文学プログラム" in departments["kaikouBukyokuDaigakuins"]
+    assert "人間社会科学研究科博士課程前期人文社会科学専攻" not in departments["kaikouBukyokuDaigakuins"]

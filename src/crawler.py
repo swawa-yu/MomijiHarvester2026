@@ -59,6 +59,10 @@ class MomijiCrawler:
 
         return links
 
+    async def collect_department_lists(self) -> dict[str, list[str]]:
+        html = await self.fetch_html(self.config.base_url)
+        return Parser.parse_department_lists(html)
+
     async def collect_subject_urls(self, faculty_url: str) -> List[str]:
         html = await self.fetch_html(faculty_url)
         soup = Parser.get_html_soup(html)
