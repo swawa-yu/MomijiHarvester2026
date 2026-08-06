@@ -133,7 +133,7 @@ def test_exporter_generation_is_collision_safe(tmp_path: Path):
     assert first == second
     assert_hash_matches(first)
     assert "__en_" not in Path(first).name
-    assert not list(tmp_path.glob(".*.tmp"))
+    assert not list(tmp_path.glob(".*"))
 
 
 def test_different_valid_subjects_create_different_generations(tmp_path: Path):
@@ -171,7 +171,7 @@ def test_concurrent_exports_keep_each_generation_and_manifest_consistent(
     assert manifest["subjectCount"] == len(read(manifest_data))
     assert manifest["academicYear"] == "2026年度"
     assert manifest["source"] == "https://example.test/"
-    assert not list(tmp_path.glob(".*.tmp"))
+    assert not list(tmp_path.glob(".*"))
 
 
 @pytest.mark.parametrize("lang_tag", ["../bad", "bad/name", "bad\nname"])
