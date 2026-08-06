@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 class ScraperConfig(BaseModel):
     base_url: str = Field(..., description="トップページ URL")
-    rate_limit_seconds: float = Field(0.5, description="1リクエストあたりの待機秒数")
+    rate_limit_seconds: float = Field(0.1, description="1リクエストあたりの待機秒数")
     timeout_seconds: int = Field(10, description="HTTPタイムアウト")
     max_workers: int = Field(5, description="同時リクエスト数")
     output_dir: str = Field("output", description="JSON出力ディレクトリ")
