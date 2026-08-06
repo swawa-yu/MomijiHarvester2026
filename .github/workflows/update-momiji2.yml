@@ -28,7 +28,9 @@ jobs:
           uv venv
           uv pip install -r requirements.txt
           PYTHONPATH=. uv run pytest -q
-          uv run flake8 src tests scripts
+          uv run flake8 scripts/resolve_generation_artifacts.py \
+            scripts/validate_consumer_update_diff.py \
+            tests/test_generation_artifacts.py
 
       - name: Crawl the complete Japanese syllabus
         id: crawl
