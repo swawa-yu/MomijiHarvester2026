@@ -45,6 +45,11 @@ uv run python -m src.main list-departments
 
 デフォルトでは `output/department_constants.json` に `kaikouBukyokuGakubus` と `kaikouBukyokuDaigakuins` を出力します。
 
+通常の `run` は、科目JSONと同じトップページ取得結果から部局一覧も抽出します。対応する科目JSON世代名と、部局契約内容のSHA-256先頭12文字を含む
+`department_constants_subject_details_main_<YYYY-MM-DD>[_<lang>]_<subject-sha-prefix>_<department-envelope-sha-prefix>.json` を出力し、`schemaVersion`、年度、取得日、source、科目JSONの完全SHA-256・件数を含む契約として保存します。`subjectDataManifest.json` は両方の世代ファイルの出力後に最後に更新されます。
+
+部局成果物には安定ポインタを設けません。取り込む側はファイル名を再構成せず、対象ファイルの明示的なパスを選び、部局成果物内の契約を検証してください。
+
 ※ 実装後に詳細を調整します。
 
 ## テスト

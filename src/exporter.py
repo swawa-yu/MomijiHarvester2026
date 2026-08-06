@@ -6,7 +6,7 @@ import tempfile
 from datetime import date
 from pathlib import Path
 from collections.abc import Mapping
-from typing import Dict
+from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 from src.models import SubjectDetails
@@ -22,7 +22,14 @@ class Exporter:
         subjects: Dict[str, SubjectDetails],
         lang_tag: str = "",
         source: str = "https://momiji.hiroshima-u.ac.jp/syllabusHtml/",
+        departments: Optional[Dict[str, List[str]]] = None,
     ) -> str:
+        """Write a subject generation and, when supplied, its department contract.
+
+        ``departments`` is optional for backwards-compatible direct use of the
+        exporter.  The crawler always supplies it from the same top-page
+        snapshot used to discover faculty links.
+        """
         if (not isinstance(lang_tag, str)
                 or not re.fullmatch(r"[A-Za-z0-9_-]*", lang_tag)):
             raise ValueError("lang_tag contains unsafe characters")
@@ -41,7 +48,8 @@ class Exporter:
         self._validate(data, source)
         content = json.dumps(data, ensure_ascii=False,
                              indent=2).encode("utf-8")
-        digest = hashlib.sha256(content).hexdigest()[:12]
+        full_digest = hashlib.sha256(content).hexdigest()
+        digest = full_digest[:12]
         normalized_lang_tag = lang_tag.removeprefix("_")
         suffix = f"_{normalized_lang_tag}" if normalized_lang_tag else ""
         output_path = os.path.join(
@@ -56,7 +64,37 @@ class Exporter:
             "subjectCount": len(data),
             "source": source,
         }
+        department_content = None
+        department_path = None
+        if departments is not None:
+            self._validate_departments(departments)
+            department_artifact = {
+                "schemaVersion": 1,
+                "academicYear": manifest["academicYear"],
+                "retrievedAt": manifest["retrievedAt"],
+                "source": manifest["source"],
+                "subjectData": {
+                    "dataFile": manifest["dataFile"],
+                    "sha256": full_digest,
+                    "subjectCount": manifest["subjectCount"],
+                },
+                "departments": departments,
+            }
+            department_content = json.dumps(
+                department_artifact, ensure_ascii=False, indent=2
+            ).encode("utf-8")
+            department_digest = hashlib.sha256(department_content).hexdigest()
+            department_path = os.path.join(
+                self.output_dir,
+                f"department_constants_{Path(output_path).stem}_"
+                f"{department_digest[:12]}.json",
+            )
+
+        # The manifest is the pointer to a publishable generation, so write it
+        # only after both immutable generation files are in place.
         self._atomic_write(output_path, content)
+        if department_path is not None and department_content is not None:
+            self._atomic_write(department_path, department_content)
         self._atomic_write(
             os.path.join(self.output_dir, "subjectDataManifest.json"),
             json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"),
@@ -95,6 +133,39 @@ class Exporter:
         if len(years) != 1:
             raise ValueError(
                 "subject data must contain exactly one academic year")
+
+    @staticmethod
+    def _validate_departments(departments: object) -> None:
+        expected_keys = {
+            "kaikouBukyokuGakubus",
+            "kaikouBukyokuDaigakuins",
+        }
+        if not isinstance(departments, dict) or set(departments) != expected_keys:
+            raise ValueError(
+                "departments must contain exactly kaikouBukyokuGakubus and "
+                "kaikouBukyokuDaigakuins"
+            )
+
+        seen = set()
+        for key in (
+            "kaikouBukyokuGakubus",
+            "kaikouBukyokuDaigakuins",
+        ):
+            values = departments[key]
+            if not isinstance(values, list) or not values:
+                raise ValueError(f"departments {key} must be a nonempty list")
+            for value in values:
+                if (
+                    not isinstance(value, str)
+                    or not value.strip()
+                    or value != value.strip()
+                ):
+                    raise ValueError(
+                        f"departments {key} must contain nonempty trimmed strings"
+                    )
+                if value in seen:
+                    raise ValueError(f"departments contains duplicate: {value}")
+                seen.add(value)
 
     @staticmethod
     def _atomic_write(path: str, payload: bytes) -> None:

@@ -36,6 +36,13 @@ def assert_hash_matches(path):
     assert Path(path).stem.endswith(f"_{digest}")
 
 
+def departments():
+    return {
+        "kaikouBukyokuGakubus": ["教養教育"],
+        "kaikouBukyokuDaigakuins": ["大学院共通教育（博士課程前期）"],
+    }
+
+
 @pytest.mark.parametrize("year", ["2025年度", "2026年度"])
 def test_exporter_writes_contract_and_manifest(tmp_path: Path, year: str):
     path = Exporter(str(tmp_path)).export(
@@ -50,6 +57,35 @@ def test_exporter_writes_contract_and_manifest(tmp_path: Path, year: str):
         "retrievedAt": manifest["retrievedAt"], "subjectCount": 1,
         "source": "https://example.test/syllabus/"}
     assert len(manifest["retrievedAt"]) == 10
+
+
+def test_exporter_writes_department_contract_for_exact_subject_generation(
+        tmp_path: Path):
+    path = Exporter(str(tmp_path)).export(
+        {"10000100": subject()},
+        source="https://example.test/syllabus/",
+        departments=departments(),
+    )
+    manifest = read(tmp_path / "subjectDataManifest.json")
+    artifact_paths = list(tmp_path.glob("department_constants_*.json"))
+    assert len(artifact_paths) == 1
+    artifact = read(artifact_paths[0])
+    subject_bytes = Path(path).read_bytes()
+    assert artifact == {
+        "schemaVersion": 1,
+        "academicYear": manifest["academicYear"],
+        "retrievedAt": manifest["retrievedAt"],
+        "source": manifest["source"],
+        "subjectData": {
+            "dataFile": manifest["dataFile"],
+            "sha256": hashlib.sha256(subject_bytes).hexdigest(),
+            "subjectCount": manifest["subjectCount"],
+        },
+        "departments": departments(),
+    }
+    assert artifact_paths[0].stem.endswith(
+        f"_{hashlib.sha256(artifact_paths[0].read_bytes()).hexdigest()[:12]}"
+    )
 
 
 @pytest.mark.parametrize("mutate, message", [
@@ -72,6 +108,36 @@ def test_exporter_rejects_invalid_data_without_changing_outputs(
         exporter.export({"10000100": broken},
                         source="https://example.test/syllabus/")
     assert (Path(path).read_bytes(), manifest_path.read_bytes()) == before
+
+
+@pytest.mark.parametrize("invalid, message", [
+    ({"kaikouBukyokuGakubus": ["a"]}, "exactly"),
+    ({"kaikouBukyokuGakubus": [], "kaikouBukyokuDaigakuins": ["b"]}, "nonempty"),
+    ({"kaikouBukyokuGakubus": [" a"], "kaikouBukyokuDaigakuins": ["b"]}, "trimmed"),
+    ({"kaikouBukyokuGakubus": ["a"], "kaikouBukyokuDaigakuins": ["a"]}, "duplicate"),
+])
+def test_invalid_departments_preserve_previous_generation_and_manifest(
+        tmp_path: Path, invalid, message):
+    exporter = Exporter(str(tmp_path))
+    exporter.export(
+        {"10000100": subject()},
+        source="https://example.test/",
+        departments=departments(),
+    )
+    before = {
+        path.name: path.read_bytes()
+        for path in tmp_path.iterdir()
+    }
+    with pytest.raises(ValueError, match=message):
+        exporter.export(
+            {"10000100": subject()},
+            source="https://example.test/",
+            departments=invalid,
+        )
+    assert {
+        path.name: path.read_bytes()
+        for path in tmp_path.iterdir()
+    } == before
 
 
 def test_exporter_rejects_mixed_year_empty_and_non_https(tmp_path: Path):
@@ -124,6 +190,71 @@ def test_exporter_manifest_failure_preserves_previous_pointer_and_data(
                != old_data for path in orphan_paths)
 
 
+def test_department_artifact_failure_preserves_previous_manifest(
+        tmp_path: Path, monkeypatch):
+    exporter = Exporter(str(tmp_path))
+    old_path = exporter.export(
+        {"10000100": subject()},
+        source="https://example.test/",
+        departments=departments(),
+    )
+    manifest_path = tmp_path / "subjectDataManifest.json"
+    old_manifest = manifest_path.read_bytes()
+    original_replace = os.replace
+
+    def fail_department_artifact(source, destination):
+        if Path(destination).name.startswith("department_constants_"):
+            raise OSError("simulated department artifact replacement failure")
+        return original_replace(source, destination)
+
+    monkeypatch.setattr("src.exporter.os.replace", fail_department_artifact)
+    changed = subject().model_copy(update={"title": "changed"})
+    with pytest.raises(OSError, match="department artifact"):
+        exporter.export(
+            {"10000100": changed},
+            source="https://example.test/",
+            departments=departments(),
+        )
+    assert manifest_path.read_bytes() == old_manifest
+    assert read(manifest_path)["dataFile"] == Path(old_path).name
+
+
+def test_department_envelope_is_content_addressed_and_manifest_failure_keeps_old_artifact(
+        tmp_path: Path, monkeypatch):
+    exporter = Exporter(str(tmp_path))
+    subjects = {"10000100": subject()}
+    exporter.export(
+        subjects, source="https://first.example.test/", departments=departments()
+    )
+    old_artifact = next(tmp_path.glob("department_constants_*.json"))
+    old_bytes = old_artifact.read_bytes()
+    original_replace = os.replace
+
+    def fail_manifest(source, destination):
+        if Path(destination).name == "subjectDataManifest.json":
+            raise OSError("simulated manifest replacement failure")
+        return original_replace(source, destination)
+
+    monkeypatch.setattr("src.exporter.os.replace", fail_manifest)
+    changed_departments = {
+        "kaikouBukyokuGakubus": ["教養教育", "総合科学部"],
+        "kaikouBukyokuDaigakuins": ["大学院共通教育（博士課程前期）"],
+    }
+    with pytest.raises(OSError, match="manifest"):
+        exporter.export(
+            subjects,
+            source="https://second.example.test/",
+            departments=changed_departments,
+        )
+    artifact_paths = list(tmp_path.glob("department_constants_*.json"))
+    assert len(artifact_paths) == 2
+    assert old_artifact.read_bytes() == old_bytes
+    assert all(
+        path.stem.endswith(f"_{hashlib.sha256(path.read_bytes()).hexdigest()[:12]}")
+        for path in artifact_paths
+    )
+
+
 def test_exporter_generation_is_collision_safe(tmp_path: Path):
     exporter = Exporter(str(tmp_path))
     first = exporter.export({"10000100": subject()},
@@ -157,7 +288,9 @@ def test_concurrent_exports_keep_each_generation_and_manifest_consistent(
     ]
     with ThreadPoolExecutor(max_workers=4) as pool:
         paths = list(pool.map(
-            lambda data: exporter.export(data, source="https://example.test/"),
+            lambda data: exporter.export(
+                data, source="https://example.test/", departments=departments()
+            ),
             inputs))
     for path in paths:
         assert Path(path).exists()
@@ -171,6 +304,20 @@ def test_concurrent_exports_keep_each_generation_and_manifest_consistent(
     assert manifest["subjectCount"] == len(read(manifest_data))
     assert manifest["academicYear"] == "2026年度"
     assert manifest["source"] == "https://example.test/"
+    artifact_paths = list(tmp_path.glob("department_constants_*.json"))
+    assert len(artifact_paths) == len(paths)
+    artifacts = [read(path) for path in artifact_paths]
+    for path, artifact in zip(artifact_paths, artifacts):
+        assert path.stem.endswith(
+            f"_{hashlib.sha256(path.read_bytes()).hexdigest()[:12]}"
+        )
+        assert artifact["subjectData"]["sha256"] == hashlib.sha256(
+            (tmp_path / artifact["subjectData"]["dataFile"]).read_bytes()
+        ).hexdigest()
+    assert any(
+        artifact["subjectData"]["dataFile"] == manifest["dataFile"]
+        for artifact in artifacts
+    )
     assert not list(tmp_path.glob(".*"))
 
 

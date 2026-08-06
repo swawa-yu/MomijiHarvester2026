@@ -27,8 +27,7 @@ class MomijiCrawler:
         await asyncio.sleep(self.config.rate_limit_seconds)
         return response.text
 
-    async def collect_faculty_urls(self) -> List[str]:
-        html = await self.fetch_html(self.config.base_url)
+    def collect_faculty_urls_from_html(self, html: str) -> List[str]:
         soup = Parser.get_html_soup(html)
 
         faculty_pattern = re.compile(r"^\d{4}_[A-Za-z0-9]+(?:_en)?\.html$")
@@ -58,6 +57,10 @@ class MomijiCrawler:
             raise ValueError("No faculty URLs found in page structure. Check HTML structure.")
 
         return links
+
+    async def collect_faculty_urls(self) -> List[str]:
+        html = await self.fetch_html(self.config.base_url)
+        return self.collect_faculty_urls_from_html(html)
 
     async def collect_department_lists(self) -> dict[str, list[str]]:
         html = await self.fetch_html(self.config.base_url)
@@ -107,7 +110,9 @@ class MomijiCrawler:
 
     async def run(self, max_subjects: int = 20, dry_run: bool = False):
         try:
-            faculty_urls = await self.collect_faculty_urls()
+            top_page_html = await self.fetch_html(self.config.base_url)
+            faculty_urls = self.collect_faculty_urls_from_html(top_page_html)
+            departments = Parser.parse_department_lists(top_page_html)
             result: Dict[str, SubjectDetails] = {}
             subject_batches = []
 
@@ -165,7 +170,10 @@ class MomijiCrawler:
 
             lang_tag = "_en" if self.include_english else ""
             output_path = self.exporter.export(
-                result, lang_tag=lang_tag, source=self.config.base_url
+                result,
+                lang_tag=lang_tag,
+                source=self.config.base_url,
+                departments=departments,
             )
             print(f"Exported {len(result)} subjects to {output_path}")
         finally:
