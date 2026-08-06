@@ -1,5 +1,7 @@
 import json
+import hashlib
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -27,6 +29,11 @@ def subject(code="10000100", year="2026年度"):
 
 def read(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def assert_hash_matches(path):
+    digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()[:12]
+    assert Path(path).stem.endswith(f"_{digest}")
 
 
 @pytest.mark.parametrize("year", ["2025年度", "2026年度"])
@@ -84,6 +91,7 @@ def test_exporter_uses_official_source_when_omitted(tmp_path: Path):
     assert manifest["dataFile"] == Path(path).name
     assert manifest["source"] == (
         "https://momiji.hiroshima-u.ac.jp/syllabusHtml/")
+    assert_hash_matches(path)
 
 
 def test_exporter_manifest_failure_preserves_previous_pointer_and_data(
@@ -123,8 +131,46 @@ def test_exporter_generation_is_collision_safe(tmp_path: Path):
     second = exporter.export({"10000100": subject()},
                              lang_tag="_en", source="https://example.test/")
     assert first == second
-    assert Path(first).name.endswith(
-        "_en_" + Path(first).stem.rsplit("_", 1)[-1] + ".json")
+    assert_hash_matches(first)
+    assert "__en_" not in Path(first).name
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_different_valid_subjects_create_different_generations(tmp_path: Path):
+    exporter = Exporter(str(tmp_path))
+    first = exporter.export(
+        {"10000100": subject()}, source="https://example.test/")
+    changed = subject().model_copy(update={"title": "different"})
+    second = exporter.export(
+        {"10000100": changed}, source="https://example.test/")
+    assert first != second
+    assert_hash_matches(first)
+    assert_hash_matches(second)
+
+
+def test_concurrent_exports_keep_each_generation_and_manifest_consistent(
+        tmp_path: Path):
+    exporter = Exporter(str(tmp_path))
+    inputs = [
+        {str(10000100 + index): subject(str(10000100 + index))}
+        for index in range(4)
+    ]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        paths = list(pool.map(
+            lambda data: exporter.export(data, source="https://example.test/"),
+            inputs))
+    for path in paths:
+        assert Path(path).exists()
+        assert_hash_matches(path)
+    manifest_path = tmp_path / "subjectDataManifest.json"
+    assert manifest_path.exists()
+    manifest = read(manifest_path)
+    manifest_data = tmp_path / manifest["dataFile"]
+    assert manifest_data.exists()
+    assert_hash_matches(manifest_data)
+    assert manifest["subjectCount"] == len(read(manifest_data))
+    assert manifest["academicYear"] == "2026年度"
+    assert manifest["source"] == "https://example.test/"
     assert not list(tmp_path.glob(".*.tmp"))
 
 

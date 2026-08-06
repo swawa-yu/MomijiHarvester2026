@@ -5,7 +5,7 @@
 ## 目的
 
 - 学部/授業ページを順にたどり、科目詳細データを取得
-- 検証済みJSONを`subject_details_main_<YYYY-MM-DD>[_<lang>]_<sha256>.json`形式で世代別保存
+- 検証済みJSONを`subject_details_main_<YYYY-MM-DD>[_<lang>]_<sha256-prefix-12>.json`形式で世代別保存
 - 同じ出力ディレクトリにmomiji2互換の`subjectDataManifest.json`も保存
 - 今後GitHub Actionsによる定期実行を想定
 
