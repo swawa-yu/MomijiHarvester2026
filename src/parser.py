@@ -1,4 +1,5 @@
 from bs4 import BeautifulSoup
+from typing import Optional
 from src.models import SubjectDetails
 
 
@@ -82,15 +83,71 @@ class Parser:
         return SubjectDetails(**{k: v for k, v in data.items() if v is not None})
 
     @staticmethod
+    def _normalized_text(node) -> str:
+        text = node.get_text(" ", strip=True).replace("\xa0", " ")
+        return " ".join(text.split())
+
+    @staticmethod
+    def _section_name_from_header(node) -> Optional[str]:
+        if getattr(node, "name", None) != "font" or node.get("size") != "+2":
+            return None
+
+        section_name = Parser._normalized_text(node)
+        if section_name in {"学部", "大学院"}:
+            return section_name
+        return None
+
+    @staticmethod
     def _extract_department_names_from_group(img):
         names = []
-        for node in img.next_siblings:
-            if getattr(node, "name", None) == "img" and node.get("src", "").endswith("syllabus_list.gif"):
+        row_parts = []
+        transition_container = next(
+            (
+                node for node in img.next_siblings
+                if getattr(node, "name", None) == "p"
+                and node.find("table")
+                and any(
+                    Parser._section_name_from_header(font)
+                    for font in node.find_all("font")
+                )
+            ),
+            None,
+        )
+
+        def flush_row():
+            name = "".join(row_parts).replace("\xa0", " ")
+            name = " ".join(name.split())
+            if name:
+                names.append(name)
+            row_parts.clear()
+
+        for node in img.next_elements:
+            # The legacy top page puts a table-based legend and the next
+            # section header in a direct p after the list, outside row data.
+            if node is transition_container:
+                flush_row()
                 break
-            if getattr(node, "name", None) == "a":
-                text = node.get_text(" ", strip=True)
-                if text:
-                    names.append(text)
+            if Parser._section_name_from_header(node):
+                flush_row()
+                break
+            is_list_marker = (
+                getattr(node, "name", None) == "img"
+                and node.get("src", "").endswith("syllabus_list.gif")
+            )
+            if is_list_marker:
+                flush_row()
+                break
+            if getattr(node, "name", None) == "br":
+                flush_row()
+                continue
+            if getattr(node, "name", None):
+                continue
+
+            text = str(node)
+            if text.strip():
+                row_parts.append(text)
+
+        flush_row()
         return names
 
     @staticmethod
@@ -103,18 +160,29 @@ class Parser:
         seen_gakubu = set()
         seen_daigakuin = set()
 
+        section_keys = {
+            "学部": ("kaikouBukyokuGakubus", seen_gakubu),
+            "大学院": ("kaikouBukyokuDaigakuins", seen_daigakuin),
+        }
+
         for img in soup.select('img[src*="syllabus_list.gif"]'):
-            prev_font = img.find_previous("font")
-            is_daigakuin = bool(prev_font and "大学院" in prev_font.get_text(strip=True))
+            section_name = next(
+                (
+                    Parser._section_name_from_header(font)
+                    for font in img.find_all_previous("font")
+                    if Parser._section_name_from_header(font)
+                ),
+                None,
+            )
+            section = section_keys.get(section_name)
+            if section is None:
+                continue
+
+            result_key, seen = section
             names = Parser._extract_department_names_from_group(img)
             for name in names:
-                if is_daigakuin:
-                    if name not in seen_daigakuin:
-                        seen_daigakuin.add(name)
-                        result["kaikouBukyokuDaigakuins"].append(name)
-                else:
-                    if name not in seen_gakubu:
-                        seen_gakubu.add(name)
-                        result["kaikouBukyokuGakubus"].append(name)
+                if name not in seen:
+                    seen.add(name)
+                    result[result_key].append(name)
 
         return result

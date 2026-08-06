@@ -46,11 +46,72 @@ def test_parse_subject_page_with_actual_sample():
 def test_parse_department_lists_from_index_sample():
     html = Path("tests/sample/index.html").read_text(encoding="utf-8")
     departments = Parser.parse_department_lists(html)
+    gakubus = departments["kaikouBukyokuGakubus"]
+    daigakuins = departments["kaikouBukyokuDaigakuins"]
 
-    assert departments["kaikouBukyokuGakubus"][0] == "教養教育"
-    assert "総合科学部総合科学科" in departments["kaikouBukyokuGakubus"]
-    assert "法学部法学科夜間主コース" in departments["kaikouBukyokuGakubus"]
-    assert "法学部" not in departments["kaikouBukyokuGakubus"]
-    assert departments["kaikouBukyokuDaigakuins"][0] == "大学院共通教育（博士課程前期）"
-    assert "人間社会科学研究科博士課程前期人文社会科学専攻人文学プログラム" in departments["kaikouBukyokuDaigakuins"]
-    assert "人間社会科学研究科博士課程前期人文社会科学専攻" not in departments["kaikouBukyokuDaigakuins"]
+    assert len(gakubus) == 40
+    assert len(daigakuins) == 107
+    assert len(gakubus) == len(set(gakubus))
+    assert len(daigakuins) == len(set(daigakuins))
+    assert gakubus[0] == "教養教育"
+    assert gakubus[-1] == "IDEC国際連携機構"
+    assert daigakuins[0] == "大学院共通教育（博士課程前期）"
+    assert daigakuins[-1] == "IDEC国際連携機構（大学院）"
+
+    assert "教育学部" in gakubus
+    assert "人間社会科学研究科博士課程前期人文社会科学専攻心理学プログラム" in daigakuins
+    assert "人間社会科学研究科博士課程前期人文社会科学専攻マネジメントプログラム" in daigakuins
+    assert "人間社会科学研究科博士課程前期人文社会科学専攻ソーシャルデータサイエンスプログラム" in daigakuins
+    assert "統合生命科学研究科博士課程後期統合生命科学専攻食品生命科学プログラム" in daigakuins
+    law_index = gakubus.index("法学部")
+    assert gakubus[law_index:law_index + 4] == [
+        "法学部",
+        "法学部法学科",
+        "法学部法学科昼間コース",
+        "法学部法学科夜間主コース",
+    ]
+    assert "人間社会科学研究科博士課程前期人文社会科学専攻" in daigakuins
+    assert "大学院共通教育（博士課程前期）" not in gakubus
+
+
+def test_parse_department_lists_handles_nested_inline_section_markup():
+    html = """
+    <font size="+2"> 学部 </font>
+    <img src="syllabus_list.gif">
+    <span>親<label><br>子</label></span><br>
+    <font>大学院</font>装飾ラベル<br>
+    <img src="syllabus_list.gif">
+    <div>次の学部ラベル<br><font size="+2"> 大学院 </font></div><br>
+    <img src="syllabus_list.gif">
+    <span>大学院の親<br>大学院の子</span><br>
+    <font size="+2"> 学部 </font>
+    <img src="syllabus_list.gif">
+    <p>p内の有効な学部ラベル<br><font size="+2"> 大学院 </font></p>
+    <img src="syllabus_list.gif">
+    p境界後の大学院ラベル<br>
+    <font size="+2"> 学部 </font>
+    <img src="syllabus_list.gif">
+    table境界前の学部ラベル<br>
+    <p>凡例テキスト<br><table><tr><td>凡例表</td></tr></table>
+    <font size="+2"> 大学院 </font></p>
+    <img src="syllabus_list.gif">
+    table境界後の大学院ラベル<br>
+    """
+
+    departments = Parser.parse_department_lists(html)
+
+    assert departments["kaikouBukyokuGakubus"] == [
+        "親",
+        "子",
+        "大学院装飾ラベル",
+        "次の学部ラベル",
+        "p内の有効な学部ラベル",
+        "table境界前の学部ラベル",
+    ]
+    assert departments["kaikouBukyokuDaigakuins"] == [
+        "大学院の親",
+        "大学院の子",
+        "p境界後の大学院ラベル",
+        "table境界後の大学院ラベル",
+    ]
+    assert "凡例テキスト" not in departments["kaikouBukyokuGakubus"]
