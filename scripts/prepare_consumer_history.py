@@ -277,9 +277,10 @@ def prepare_history_update(
             current_manifest = read_json(current_manifest_path, "current manifest")
             if not isinstance(current_manifest, dict):
                 raise ValueError("current manifest must be an object")
-            current_year = current_manifest.get("academicYear", "").removesuffix(
-                "年度"
-            )
+            current_year_value = current_manifest.get("academicYear")
+            if not isinstance(current_year_value, str):
+                raise ValueError("current manifest academicYear must be a string")
+            current_year = current_year_value.removesuffix("年度")
             if current_year != year:
                 if update_kind != "year-rollover":
                     raise ValueError(
