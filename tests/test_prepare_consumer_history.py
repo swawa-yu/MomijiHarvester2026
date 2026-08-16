@@ -1,5 +1,7 @@
 import hashlib
 import json
+import subprocess
+import sys
 from copy import deepcopy
 from pathlib import Path
 
@@ -8,6 +10,19 @@ import pytest
 from scripts.prepare_consumer_history import prepare_history_update
 from scripts.subject_history import canonical_sha256, read_json, verify_chain
 from tests.test_subject_history import manifest, snapshots
+
+
+def test_cli_module_help_runs_from_repository_root():
+    result = subprocess.run(
+        [sys.executable, "-m", "scripts.prepare_consumer_history", "--help"],
+        cwd=Path(__file__).parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--consumer-data-dir" in result.stdout
 
 
 def write_classification_artifact(
