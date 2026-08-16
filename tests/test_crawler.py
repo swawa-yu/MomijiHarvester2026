@@ -57,13 +57,15 @@ def faculty_page(*subject_files):
     return "".join(f'<a href="{name}">{name}</a>' for name in subject_files)
 
 
-def subject_page(year, code):
-    return f"""
-    <table>
-      <tr><th>年度</th><td>{year}年度</td></tr>
-      <tr><th>講義コード</th><td>{code}</td></tr>
-    </table>
-    """
+def subject_page(year, code, omitted=()):
+    values = {header: "" for header in Parser.SUBJECT_CONTRACT_HEADERS}
+    values.update({"年度": f"{year}年度", "講義コード": code})
+    rows = "".join(
+        f"<tr><th>{header}</th><td>{value}</td></tr>"
+        for header, value in values.items()
+        if header not in omitted
+    )
+    return f"<table>{rows}</table>"
 
 
 class MemoryCrawler(MomijiCrawler):
@@ -379,6 +381,39 @@ async def test_unknown_subject_header_preserves_existing_generation(
 
 
 @pytest.mark.asyncio
+async def test_missing_subject_header_preserves_existing_generation(
+        tmp_path: Path):
+    base_url = "https://example.test/syllabus/"
+    output_dir = tmp_path / "output"
+    baseline = MemoryCrawler(base_url, output_dir, preflight_responses(base_url))
+    await baseline.run(max_subjects=2)
+    before = {
+        path.name: path.read_bytes()
+        for path in output_dir.iterdir()
+    }
+
+    failing_responses = preflight_responses(base_url)
+    failing_url = base_url + "2026_AA_10000101.html"
+    failing_responses[failing_url] = subject_page(
+        "2026",
+        "10000101",
+        omitted=("使用言語",),
+    )
+    crawler = MemoryCrawler(base_url, output_dir, failing_responses)
+
+    with pytest.raises(RuntimeError, match="Incomplete crawl") as error:
+        await crawler.run(max_subjects=2)
+
+    assert "Missing subject header" in str(error.value)
+    assert "使用言語" in str(error.value)
+    assert failing_url in str(error.value)
+    assert {
+        path.name: path.read_bytes()
+        for path in output_dir.iterdir()
+    } == before
+
+
+@pytest.mark.asyncio
 async def test_transient_detail_http_failure_recovers_and_publishes(tmp_path: Path):
     base_url = "https://example.test/syllabus/"
     output_dir = tmp_path / "output"
@@ -415,6 +450,12 @@ async def test_transient_detail_http_failure_recovers_and_publishes(tmp_path: Pa
 
     assert attempts[detail_url] == 2
     assert retry_delays == [crawler.config.retry_initial_delay_seconds]
+    assert crawler.subject_structure_report["subjectPageCount"] == 1
+    assert crawler.subject_structure_report["missingHeaders"] == []
+    assert crawler.subject_structure_report["headerPresence"]["年度"] == {
+        "presentCount": 1,
+        "presenceRate": 1,
+    }
     assert (output_dir / "subjectDataManifest.json").exists()
 
 
@@ -434,7 +475,7 @@ async def test_parser_failure_is_not_retried_and_blocks_output(
     def fail_parse(*args, **kwargs):
         raise ValueError("malformed detail page")
 
-    monkeypatch.setattr(Parser, "parse_subject_page", fail_parse)
+    monkeypatch.setattr(Parser, "parse_subject_page_with_structure", fail_parse)
     with pytest.raises(RuntimeError, match="Incomplete crawl"):
         await crawler.run(max_subjects=0)
 

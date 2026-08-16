@@ -1,26 +1,112 @@
 from pathlib import Path
+
+import pytest
+
 from src.parser import Parser
 from src.models import SubjectDetails
 
 
+def subject_page(overrides=None, omitted=(), extra=()):
+    values = {header: "" for header in Parser.SUBJECT_CONTRACT_HEADERS}
+    values.update({
+        "年度": "2026年度",
+        "開講部局": "教養教育",
+        "講義コード": "10000100",
+        "科目区分": "大学教育入門",
+        "授業科目名": "大学教育入門",
+        "担当教員名": "林 光緒",
+    })
+    values.update(overrides or {})
+    rows = [
+        f"<tr><th>{header}</th><td>{value}</td></tr>"
+        for header, value in values.items()
+        if header not in omitted
+    ]
+    rows.extend(
+        f"<tr><th>{header}</th><td>{value}</td></tr>"
+        for header, value in extra
+    )
+    return f"<table>{''.join(rows)}</table>"
+
+
 def test_parse_subject_page_minimal():
-    html = """
-    <html><body>
-      <table>
-        <tr><th>年度</th><td>2025年度</td></tr>
-        <tr><th>講義コード</th><td>10000100</td></tr>
-        <tr><th>科目区分</th><td>大学教育入門</td></tr>
-        <tr><th>授業科目名</th><td>大学教育入門[1総総,1文,1経]</td></tr>
-        <tr><th>担当教員名</th><td>林 光緒</td></tr>
-      </table>
-    </body></html>
-    """
+    html = subject_page({
+        "年度": "2025年度",
+        "授業科目名": "大学教育入門[1総総,1文,1経]",
+    })
 
     subject = Parser.parse_subject_page(html, "2025_AA_10000100.html", "教養教育")
     assert isinstance(subject, SubjectDetails)
     assert subject.code == "10000100"
     assert subject.nendo == "2025年度"
     assert subject.faculty == "教養教育"
+
+
+def test_inspect_subject_structure_detects_added_removed_and_renamed_headers():
+    _, added = Parser.inspect_subject_page_structure(
+        subject_page(extra=(("新しい項目", "値"),)),
+        "added.html",
+    )
+    assert added["unknownHeaders"] == ["新しい項目"]
+    assert added["missingHeaders"] == []
+
+    _, removed = Parser.inspect_subject_page_structure(
+        subject_page(omitted=("使用言語",)),
+        "removed.html",
+    )
+    assert removed["unknownHeaders"] == []
+    assert removed["missingHeaders"] == ["使用言語"]
+
+    renamed_html = subject_page(
+        omitted=("使用言語",),
+        extra=(("授業言語", "日本語"),),
+    )
+    _, renamed = Parser.inspect_subject_page_structure(
+        renamed_html,
+        "renamed.html",
+    )
+    assert renamed["unknownHeaders"] == ["授業言語"]
+    assert renamed["missingHeaders"] == ["使用言語"]
+
+    with pytest.raises(ValueError) as error:
+        Parser.parse_subject_page(renamed_html, "renamed.html", "教養教育")
+    assert "授業言語" in str(error.value)
+    assert "使用言語" in str(error.value)
+
+
+def test_summarize_subject_structure_reports_presence_counts_and_rates():
+    _, complete = Parser.inspect_subject_page_structure(
+        subject_page(),
+        "complete.html",
+    )
+    _, missing = Parser.inspect_subject_page_structure(
+        subject_page(omitted=("メッセージ",)),
+        "missing.html",
+    )
+
+    report = Parser.summarize_subject_page_structures([complete, missing])
+
+    assert report["subjectPageCount"] == 2
+    assert report["missingHeaders"] == ["メッセージ"]
+    assert report["headerPresence"]["年度"] == {
+        "presentCount": 2,
+        "presenceRate": 1,
+    }
+    assert report["headerPresence"]["メッセージ"] == {
+        "presentCount": 1,
+        "presenceRate": 0.5,
+    }
+
+
+def test_parse_subject_page_rejects_missing_header_with_source_url():
+    html = subject_page(omitted=("使用言語",))
+
+    with pytest.raises(ValueError) as error:
+        Parser.parse_subject_page(html, "missing-language.html", "教養教育")
+
+    assert "Missing subject header(s)" in str(error.value)
+    assert "使用言語" in str(error.value)
+    assert "missing-language.html" in str(error.value)
 
 
 def test_parse_subject_page_with_actual_sample():

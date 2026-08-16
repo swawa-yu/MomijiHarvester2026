@@ -21,6 +21,7 @@ class MomijiCrawler:
         self.include_english = include_english
         self.faculty_link_status: Dict[str, str] = {}
         self.subject_link_status: Dict[str, str] = {}
+        self.subject_structure_report = None
 
     async def fetch_html(self, url: str) -> str:
         response = await self.client.get(url)
@@ -144,10 +145,24 @@ class MomijiCrawler:
         }
 
     async def process_subject(self, subject_url: str, faculty_name: str) -> SubjectDetails:
+        subject, _ = await self.process_subject_with_structure(
+            subject_url,
+            faculty_name,
+        )
+        return subject
+
+    async def process_subject_with_structure(
+        self,
+        subject_url: str,
+        faculty_name: str,
+    ) -> tuple[SubjectDetails, dict[str, object]]:
         html = await self.fetch_html(subject_url)
         relative_url = subject_url.replace(self.config.base_url, "")
-        subject = Parser.parse_subject_page(html, relative_url, faculty_name)
-        return subject
+        return Parser.parse_subject_page_with_structure(
+            html,
+            relative_url,
+            faculty_name,
+        )
 
     async def run(self, max_subjects: int = 20, dry_run: bool = False):
         try:
@@ -196,6 +211,7 @@ class MomijiCrawler:
                 unique_subjects = unique_subjects[:max_subjects]
 
             subject_sources = {}
+            subject_structures = []
             failures = []
             with tqdm(
                 total=len(unique_subjects),
@@ -209,11 +225,15 @@ class MomijiCrawler:
                         unique_subjects, start=1):
                     bar.set_description(f"Parsing {faculty_name}")
                     try:
-                        subject = await self.process_subject(subject_url, faculty_name)
+                        subject, structure = await self.process_subject_with_structure(
+                            subject_url,
+                            faculty_name,
+                        )
                     except Exception as e:
                         print(f"Failed to process {subject_url}: {e}")
                         failures.append((subject_url, e))
                     else:
+                        subject_structures.append(structure)
                         if subject.code in result:
                             previous_url, previous_faculty = subject_sources[
                                 subject.code
@@ -244,6 +264,18 @@ class MomijiCrawler:
                     "URLs failed; no outputs were updated. "
                     f"Representative failures: {representative_failures}"
                 )
+
+            self.subject_structure_report = (
+                Parser.summarize_subject_page_structures(subject_structures)
+            )
+            print(
+                "Subject structure: "
+                f"pages={self.subject_structure_report['subjectPageCount']}, "
+                f"observed headers="
+                f"{len(self.subject_structure_report['observedHeaders'])}, "
+                f"missing contract headers="
+                f"{len(self.subject_structure_report['missingHeaders'])}."
+            )
 
             output_path = self.exporter.export(
                 result,
