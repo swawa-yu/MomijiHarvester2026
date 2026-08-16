@@ -44,37 +44,6 @@ class Parser:
         )
 
     @staticmethod
-    def _extract_subject_raw(html: str) -> dict[str, str]:
-        soup = Parser.get_html_soup(html)
-        raw = {}
-        for tr in soup.select("table tr"):
-            ths = tr.select("th")
-            tds = tr.select("td")
-            if not ths or not tds:
-                continue
-
-            if len(ths) == len(tds):
-                for th, td in zip(ths, tds):
-                    label = th.get_text(separator=" ", strip=True).replace("\u3000", " ").strip()
-                    value = td.get_text(separator=" ", strip=True).strip()
-                    if label:
-                        raw[label] = value
-            elif len(ths) == 1:
-                label = ths[0].get_text(separator=" ", strip=True).replace("\u3000", " ").strip()
-                value = " ".join(td.get_text(separator=" ", strip=True) for td in tds).strip()
-                if label:
-                    raw[label] = value
-            else:
-                # それ以外の場合、見出しと値を対応させる
-                pair_count = min(len(ths), len(tds))
-                for i in range(pair_count):
-                    label = ths[i].get_text(separator=" ", strip=True).replace("\u3000", " ").strip()
-                    value = tds[i].get_text(separator=" ", strip=True).strip()
-                    if label:
-                        raw[label] = value
-        return raw
-
-    @staticmethod
     def _extract_subject_occurrences(html: str) -> list[tuple[str, str]]:
         soup = Parser.get_html_soup(html)
         occurrences = []
@@ -87,13 +56,20 @@ class Parser:
             if len(ths) == 1:
                 pairs = [(ths[0], tds[0] if len(tds) == 1 else None)]
                 if pairs[0][1] is None:
-                    value = " ".join(td.get_text(separator=" ", strip=True) for td in tds).strip()
-                    occurrences.append((ths[0].get_text(separator=" ", strip=True), value))
+                    value = " ".join(
+                        td.get_text(separator=" ", strip=True) for td in tds
+                    ).strip()
+                    occurrences.append((
+                        ths[0].get_text(separator=" ", strip=True), value
+                    ))
                     continue
             else:
                 pairs = zip(ths, tds)
             for th, td in pairs:
-                occurrences.append((th.get_text(separator=" ", strip=True), td.get_text(separator=" ", strip=True)))
+                occurrences.append((
+                    th.get_text(separator=" ", strip=True),
+                    td.get_text(separator=" ", strip=True),
+                ))
         return occurrences
 
     @classmethod
@@ -102,30 +78,33 @@ class Parser:
         html: str,
         source_url: str,
     ) -> tuple[dict[str, str], dict[str, object]]:
-        raw = cls._extract_subject_raw(html)
-        known_headers = cls.SUBJECT_CONTRACT_HEADERS + cls.LEGACY_SOURCE_HEADERS + cls.INFORMATIONAL_HEADERS
+        occurrences = cls._extract_subject_occurrences(html)
+        raw = {label: value for label, value in occurrences}
+        known_headers = (
+            cls.SUBJECT_CONTRACT_HEADERS + cls.LEGACY_SOURCE_HEADERS
+            + cls.INFORMATIONAL_HEADERS
+        )
         canonical_by_normalized = {
             cls._normalize_subject_header(header): header
             for header in known_headers
         }
         observed_values = {}
-        for label, value in raw.items():
+        for label, value in occurrences:
             normalized = cls._normalize_subject_header(label)
             if normalized in canonical_by_normalized:
                 canonical = canonical_by_normalized[normalized]
                 observed_values.setdefault(canonical, []).append(value)
         observed_headers = set(observed_values)
-        unknown_headers = sorted(
-            label
-            for label in raw
+        unknown_headers = sorted({
+            label for label, _ in occurrences
             if cls._normalize_subject_header(label) not in canonical_by_normalized
-        )
+        })
         unknown_values = {}
-        for label, value in cls._extract_subject_occurrences(html):
+        for label, value in occurrences:
             if cls._normalize_subject_header(label) not in canonical_by_normalized:
                 unknown_values.setdefault(label, []).append(value)
         normalized_occurrences = {}
-        for label, value in cls._extract_subject_occurrences(html):
+        for label, value in occurrences:
             normalized = cls._normalize_subject_header(label)
             canonical = canonical_by_normalized.get(normalized)
             if canonical:
