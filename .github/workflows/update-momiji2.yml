@@ -87,8 +87,9 @@ jobs:
         env:
           YEAR: ${{ steps.crawl.outputs.year }}
           SHA256: ${{ steps.crawl.outputs.data_sha256 }}
+          STRUCTURE_SHA256: ${{ steps.crawl.outputs.structure_sha256 }}
         run: |
-          branch="automation/harvester-${YEAR}-${SHA256:0:12}"
+          branch="automation/harvester-${YEAR}-${SHA256:0:8}-${STRUCTURE_SHA256:0:8}"
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
           if git ls-remote --exit-code --heads \
             https://github.com/swawa-yu/momiji2.git "refs/heads/$branch"; then
@@ -104,14 +105,15 @@ jobs:
         env:
           DATA_FILE: ${{ steps.crawl.outputs.data_file }}
           DATA_SHA256: ${{ steps.crawl.outputs.data_sha256 }}
+          STRUCTURE_SHA256: ${{ steps.crawl.outputs.structure_sha256 }}
         run: |
-          if python - "$DATA_FILE" "$DATA_SHA256" <<'PY'
+          if python - "$DATA_FILE" "$DATA_SHA256" "$STRUCTURE_SHA256" <<'PY'
           import hashlib
           import json
           import sys
           from pathlib import Path
 
-          data_file, expected_sha256 = sys.argv[1:]
+          data_file, expected_sha256, expected_structure_sha256 = sys.argv[1:]
           manifest_path = Path("data/subjectDataManifest.json")
           data_path = Path("data") / data_file
           try:
@@ -122,6 +124,11 @@ jobs:
               raise SystemExit(1)
           if hashlib.sha256(data_path.read_bytes()).hexdigest() != expected_sha256:
               raise SystemExit(1)
+          structure_path = Path("data/subject_structure.json")
+          if not structure_path.is_file():
+              raise SystemExit(1)
+          if hashlib.sha256(structure_path.read_bytes()).hexdigest() != expected_structure_sha256:
+              raise SystemExit(1)
           PY
           then
             echo "already_current=true" >> "$GITHUB_OUTPUT"
@@ -129,14 +136,16 @@ jobs:
             echo "already_current=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Check the Harvester generation and require zero review findings
+      - name: Check the Harvester generation and record analysis
         if: inputs.mode == 'full' && steps.current.outputs.already_current != 'true'
         working-directory: ${{ runner.temp }}/momiji2
         env:
           MANIFEST_PATH: ${{ steps.crawl.outputs.manifest_path }}
           DEPARTMENTS_PATH: ${{ steps.crawl.outputs.departments_path }}
+          GUARD_REPORT_PATH: ${{ runner.temp }}/update-guard-report.json
         run: |
           node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';
           import { importHarvesterGeneration } from './scripts/import-harvester-generation.mjs';
 
           const result = await importHarvesterGeneration({
@@ -147,6 +156,10 @@ jobs:
           if (result.guardReport.hardFailures.length || result.guardReport.review.length) {
             throw new Error(`Update guard did not clear: ${JSON.stringify(result.guardReport)}`);
           }
+          await fs.writeFile(
+            process.env.GUARD_REPORT_PATH,
+            `${JSON.stringify(result.guardReport, null, 2)}\n`,
+          );
           console.log(JSON.stringify(result.guardReport, null, 2));
           NODE
 
@@ -173,6 +186,7 @@ jobs:
             --consumer . --data-file "$DATA_FILE"
           git add --intent-to-add -- "data/$DATA_FILE" \
             data/subjectDataManifest.json data/department_constants.json \
+            data/subject_structure.json \
             data/derivedSubjectConstants.json src/types/subjectConstants.ts \
             src/subject/activeSubjectData.ts src/types/rawSubjectProperties.ts
           git diff --check
@@ -200,7 +214,10 @@ jobs:
               expected = json.load(source)
           with open(sys.argv[2], encoding="utf-8") as source:
               actual = json.load(source)
-          fields = ("dataFile", "academicYear", "retrievedAt", "subjectCount", "source")
+          fields = (
+              "schemaVersion", "dataFile", "academicYear", "retrievedAt",
+              "subjectCount", "source", "structureReport",
+          )
           if any(actual.get(field) != expected.get(field) for field in fields):
               raise SystemExit("existing branch manifest does not match the incoming generation")
           PY
@@ -273,6 +290,7 @@ jobs:
           git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
           git add -- "data/${{ steps.crawl.outputs.data_file }}" \
             data/subjectDataManifest.json data/department_constants.json \
+            data/subject_structure.json \
             data/derivedSubjectConstants.json src/types/subjectConstants.ts \
             src/subject/activeSubjectData.ts src/types/rawSubjectProperties.ts
           git diff --cached --check
@@ -294,19 +312,37 @@ jobs:
           RETRIEVED_AT: ${{ steps.crawl.outputs.retrieved_at }}
           SUBJECT_COUNT: ${{ steps.crawl.outputs.subject_count }}
           DATA_SHA256: ${{ steps.crawl.outputs.data_sha256 }}
+          GUARD_REPORT_PATH: ${{ runner.temp }}/update-guard-report.json
         run: |
           body_path="$RUNNER_TEMP/momiji2-update-pr.md"
-          cat > "$body_path" <<EOF
-          Automated manual-run import from MomijiHarvester2026.
+          python - "$body_path" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
 
-          - Academic year: ${YEAR}
-          - Retrieved at: ${RETRIEVED_AT}
-          - Subject count: ${SUBJECT_COUNT}
-          - Subject SHA-256: ${DATA_SHA256}
-          - Update guard: zero hard failures and zero review findings
+          report = json.loads(Path(os.environ["GUARD_REPORT_PATH"]).read_text())
+          analysis = report.get("analysis", [])
+          analysis_lines = (
+              "\n".join(f"- {item}" for item in analysis)
+              if analysis else "- 集合の増減なし"
+          )
+          body = f"""MomijiHarvester2026の手動実行から生成した更新です。
 
-          This workflow never uses --accept-review and never merges this PR.
-          EOF
+          - 年度: {os.environ["YEAR"]}
+          - 取得日: {os.environ["RETRIEVED_AT"]}
+          - 科目数: {os.environ["SUBJECT_COUNT"]}
+          - 科目データSHA-256: {os.environ["DATA_SHA256"]}
+          - 更新guard: hard failure 0件、要確認事項 0件
+
+          ## 値集合の変化（分析情報）
+
+          {analysis_lines}
+
+          このworkflowはPRを自動mergeしません。
+          """
+          Path(sys.argv[1]).write_text(body, encoding="utf-8")
+          PY
           gh pr create --repo swawa-yu/momiji2 --base develop --head "$BRANCH" \
-            --title "data: import ${YEAR} syllabus generation" \
+            --title "data: ${YEAR}年度シラバス生成物を更新" \
             --body-file "$body_path"

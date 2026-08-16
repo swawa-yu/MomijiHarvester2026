@@ -15,6 +15,9 @@ SAFE_DATA_FILENAME = re.compile(
 SAFE_DEPARTMENT_FILENAME = re.compile(
     r"^department_constants_[A-Za-z0-9._-]+\.json$"
 )
+SAFE_STRUCTURE_FILENAME = re.compile(
+    r"^subject_structure_[A-Za-z0-9._-]+\.json$"
+)
 
 
 def _regular_file(path: Path, label: str) -> Path:
@@ -130,10 +133,51 @@ def resolve_artifacts(output_dir: Path) -> dict[str, str | int]:
     if envelope["subjectData"].get("subjectCount") != subject_count:
         raise ValueError("department envelope count does not match manifest")
 
+    if manifest.get("schemaVersion") != 1:
+        raise ValueError("manifest schemaVersion must be 1")
+    structure_binding = manifest.get("structureReport")
+    if not isinstance(structure_binding, dict):
+        raise ValueError("manifest must contain structureReport")
+    structure_path = _child_file(
+        output_dir,
+        structure_binding.get("dataFile"),
+        "structure report",
+        SAFE_STRUCTURE_FILENAME,
+    )
+    structure_sha256 = hashlib.sha256(structure_path.read_bytes()).hexdigest()
+    if structure_binding.get("sha256") != structure_sha256:
+        raise ValueError("structure report hash does not match manifest")
+    structure_envelope = _read_json(structure_path, "structure report")
+    if (
+        not isinstance(structure_envelope, dict)
+        or structure_envelope.get("schemaVersion") != 1
+        or not isinstance(structure_envelope.get("subjectData"), dict)
+        or not isinstance(structure_envelope.get("structure"), dict)
+    ):
+        raise ValueError("structure report must use schemaVersion 1")
+    structure_subject = structure_envelope["subjectData"]
+    if (
+        structure_envelope.get("academicYear") != academic_year
+        or structure_envelope.get("retrievedAt") != retrieved_at
+        or structure_subject.get("dataFile") != manifest["dataFile"]
+        or structure_subject.get("sha256") != data_sha256
+        or structure_subject.get("subjectCount") != subject_count
+        or structure_envelope["structure"].get("subjectPageCount")
+        != subject_count
+    ):
+        raise ValueError("structure report does not match manifest generation")
+    if (
+        structure_envelope["structure"].get("unknownHeaders") != []
+        or structure_envelope["structure"].get("missingHeaders") != []
+    ):
+        raise ValueError("structure report contains contract drift")
+
     return {
         "manifest_path": str(manifest_path),
         "data_path": str(data_path),
         "departments_path": str(departments_path),
+        "structure_path": str(structure_path),
+        "structure_sha256": structure_sha256,
         "data_file": manifest["dataFile"],
         "academic_year": academic_year,
         "year": year_match.group(1),

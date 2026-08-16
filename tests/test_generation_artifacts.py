@@ -18,6 +18,7 @@ def write_generation(tmp_path: Path) -> tuple[Path, dict]:
     data = '{"1": {"年度": "2026年度"}}\n'.encode("utf-8")
     (tmp_path / data_file).write_bytes(data)
     manifest = {
+        "schemaVersion": 1,
         "dataFile": data_file,
         "academicYear": "2026年度",
         "retrievedAt": "2026-08-06",
@@ -39,6 +40,31 @@ def write_generation(tmp_path: Path) -> tuple[Path, dict]:
     (tmp_path / "department_constants_generation.json").write_text(
         json.dumps(envelope), encoding="utf-8"
     )
+    structure = {
+        "schemaVersion": 1,
+        "academicYear": manifest["academicYear"],
+        "retrievedAt": manifest["retrievedAt"],
+        "subjectData": {
+            "dataFile": data_file,
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "subjectCount": 1,
+        },
+        "structure": {
+            "subjectPageCount": 1,
+            "unknownHeaders": [],
+            "missingHeaders": [],
+        },
+    }
+    structure_bytes = json.dumps(structure).encode("utf-8")
+    structure_file = "subject_structure_generation.json"
+    (tmp_path / structure_file).write_bytes(structure_bytes)
+    manifest["structureReport"] = {
+        "dataFile": structure_file,
+        "sha256": hashlib.sha256(structure_bytes).hexdigest(),
+    }
+    (tmp_path / "subjectDataManifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
     return tmp_path, manifest
 
 
@@ -50,6 +76,27 @@ def test_resolve_artifacts_returns_verified_generation(tmp_path: Path):
     assert result["data_file"] == manifest["dataFile"]
     assert result["year"] == "2026"
     assert result["subject_count"] == 1
+    assert result["structure_path"].endswith(
+        manifest["structureReport"]["dataFile"]
+    )
+    assert result["structure_sha256"] == manifest["structureReport"]["sha256"]
+
+
+def test_resolve_artifacts_rejects_structure_report_from_other_generation(
+        tmp_path: Path):
+    output_dir, manifest = write_generation(tmp_path)
+    structure_path = output_dir / manifest["structureReport"]["dataFile"]
+    structure = json.loads(structure_path.read_text(encoding="utf-8"))
+    structure["subjectData"]["sha256"] = "0" * 64
+    payload = json.dumps(structure).encode("utf-8")
+    structure_path.write_bytes(payload)
+    manifest["structureReport"]["sha256"] = hashlib.sha256(payload).hexdigest()
+    (output_dir / "subjectDataManifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="does not match manifest generation"):
+        resolve_artifacts(output_dir)
 
 
 def test_resolve_artifacts_rejects_ambiguous_envelopes(tmp_path: Path):
@@ -90,6 +137,7 @@ def test_consumer_diff_allowlist_rejects_deletion_and_unknown_file():
             ("A ", "data/subject_details_main_2026-08-06_deadbeef.json"),
             (" M", "data/subjectDataManifest.json"),
             (" M", "data/department_constants.json"),
+            (" M", "data/subject_structure.json"),
             (" M", "data/derivedSubjectConstants.json"),
             (" M", "src/types/subjectConstants.ts"),
             (" M", "src/subject/activeSubjectData.ts"),
