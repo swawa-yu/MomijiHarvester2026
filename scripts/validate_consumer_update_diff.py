@@ -13,6 +13,7 @@ def allowed_paths(data_file: str) -> set[str]:
         f"data/{data_file}",
         "data/subjectDataManifest.json",
         "data/department_constants.json",
+        "data/subject_structure.json",
         "data/derivedSubjectConstants.json",
         "src/types/subjectConstants.ts",
         "src/subject/activeSubjectData.ts",

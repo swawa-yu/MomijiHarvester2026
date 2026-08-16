@@ -87,8 +87,9 @@ jobs:
         env:
           YEAR: ${{ steps.crawl.outputs.year }}
           SHA256: ${{ steps.crawl.outputs.data_sha256 }}
+          STRUCTURE_SHA256: ${{ steps.crawl.outputs.structure_sha256 }}
         run: |
-          branch="automation/harvester-${YEAR}-${SHA256:0:12}"
+          branch="automation/harvester-${YEAR}-${SHA256:0:8}-${STRUCTURE_SHA256:0:8}"
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
           if git ls-remote --exit-code --heads \
             https://github.com/swawa-yu/momiji2.git "refs/heads/$branch"; then
@@ -104,14 +105,15 @@ jobs:
         env:
           DATA_FILE: ${{ steps.crawl.outputs.data_file }}
           DATA_SHA256: ${{ steps.crawl.outputs.data_sha256 }}
+          STRUCTURE_SHA256: ${{ steps.crawl.outputs.structure_sha256 }}
         run: |
-          if python - "$DATA_FILE" "$DATA_SHA256" <<'PY'
+          if python - "$DATA_FILE" "$DATA_SHA256" "$STRUCTURE_SHA256" <<'PY'
           import hashlib
           import json
           import sys
           from pathlib import Path
 
-          data_file, expected_sha256 = sys.argv[1:]
+          data_file, expected_sha256, expected_structure_sha256 = sys.argv[1:]
           manifest_path = Path("data/subjectDataManifest.json")
           data_path = Path("data") / data_file
           try:
@@ -121,6 +123,11 @@ jobs:
           if manifest.get("dataFile") != data_file or not data_path.is_file():
               raise SystemExit(1)
           if hashlib.sha256(data_path.read_bytes()).hexdigest() != expected_sha256:
+              raise SystemExit(1)
+          structure_path = Path("data/subject_structure.json")
+          if not structure_path.is_file():
+              raise SystemExit(1)
+          if hashlib.sha256(structure_path.read_bytes()).hexdigest() != expected_structure_sha256:
               raise SystemExit(1)
           PY
           then
@@ -173,6 +180,7 @@ jobs:
             --consumer . --data-file "$DATA_FILE"
           git add --intent-to-add -- "data/$DATA_FILE" \
             data/subjectDataManifest.json data/department_constants.json \
+            data/subject_structure.json \
             data/derivedSubjectConstants.json src/types/subjectConstants.ts \
             src/subject/activeSubjectData.ts src/types/rawSubjectProperties.ts
           git diff --check
@@ -200,7 +208,10 @@ jobs:
               expected = json.load(source)
           with open(sys.argv[2], encoding="utf-8") as source:
               actual = json.load(source)
-          fields = ("dataFile", "academicYear", "retrievedAt", "subjectCount", "source")
+          fields = (
+              "schemaVersion", "dataFile", "academicYear", "retrievedAt",
+              "subjectCount", "source", "structureReport",
+          )
           if any(actual.get(field) != expected.get(field) for field in fields):
               raise SystemExit("existing branch manifest does not match the incoming generation")
           PY
@@ -273,6 +284,7 @@ jobs:
           git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
           git add -- "data/${{ steps.crawl.outputs.data_file }}" \
             data/subjectDataManifest.json data/department_constants.json \
+            data/subject_structure.json \
             data/derivedSubjectConstants.json src/types/subjectConstants.ts \
             src/subject/activeSubjectData.ts src/types/rawSubjectProperties.ts
           git diff --cached --check

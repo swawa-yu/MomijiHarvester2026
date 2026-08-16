@@ -177,6 +177,7 @@ def resolve_artifacts(output_dir: Path) -> dict[str, str | int]:
         "data_path": str(data_path),
         "departments_path": str(departments_path),
         "structure_path": str(structure_path),
+        "structure_sha256": structure_sha256,
         "data_file": manifest["dataFile"],
         "academic_year": academic_year,
         "year": year_match.group(1),

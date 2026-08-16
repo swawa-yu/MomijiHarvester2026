@@ -79,6 +79,7 @@ def test_resolve_artifacts_returns_verified_generation(tmp_path: Path):
     assert result["structure_path"].endswith(
         manifest["structureReport"]["dataFile"]
     )
+    assert result["structure_sha256"] == manifest["structureReport"]["sha256"]
 
 
 def test_resolve_artifacts_rejects_structure_report_from_other_generation(
@@ -136,6 +137,7 @@ def test_consumer_diff_allowlist_rejects_deletion_and_unknown_file():
             ("A ", "data/subject_details_main_2026-08-06_deadbeef.json"),
             (" M", "data/subjectDataManifest.json"),
             (" M", "data/department_constants.json"),
+            (" M", "data/subject_structure.json"),
             (" M", "data/derivedSubjectConstants.json"),
             (" M", "src/types/subjectConstants.ts"),
             (" M", "src/subject/activeSubjectData.ts"),
