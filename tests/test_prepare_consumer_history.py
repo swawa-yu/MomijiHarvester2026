@@ -325,7 +325,7 @@ def test_year_rollover_keeps_verified_old_index_bytes_unchanged(tmp_path: Path):
         consumer_data, next_manifest, update_kind="year-rollover"
     )
 
-    assert result["previousIndexRelativePath"] is None
+    assert result["previousIndexRelativePath"] == "data/history/2026/index.json"
     assert old_index_path.read_bytes() == old_index_bytes
     new_index = read_json(
         consumer_data / "history" / "2027" / "index.json", "new index"

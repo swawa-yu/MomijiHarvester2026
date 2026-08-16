@@ -337,7 +337,7 @@ def prepare_history_update(
                 if canonical_sha256(old_reconstructed) != canonical_sha256(current_data):
                     raise ValueError("old history chain does not reconstruct current consumer data")
             old_index_payload = None
-            old_index_relative_path = None
+            old_index_relative_path = f"data/history/{old_year}/index.json"
             if old_index is None:
                 old_index = {
                     "schemaVersion": INDEX_SCHEMA_VERSION,
@@ -348,7 +348,6 @@ def prepare_history_update(
                     "classificationArtifacts": [],
                 }
                 old_index_payload = _json_bytes(old_index)
-                old_index_relative_path = f"data/history/{old_year}/index.json"
             classification_pointer, classification_path, classification_payload = (
                 _prepare_classification_artifact(
                     classification_artifact_path,
