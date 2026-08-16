@@ -209,7 +209,7 @@ jobs:
         if: inputs.mode == 'full' && steps.current.outputs.already_current != 'true'
         id: history
         run: |
-          python scripts/prepare_consumer_history.py \
+          python -m scripts.prepare_consumer_history \
             --consumer-data-dir "$RUNNER_TEMP/momiji2/data" \
             --incoming-manifest "${{ steps.crawl.outputs.manifest_path }}" \
             --classification-artifact "${{ steps.classification.outputs.artifact_path }}" \
