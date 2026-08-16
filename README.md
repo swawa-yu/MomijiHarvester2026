@@ -85,6 +85,8 @@ PYTHONPATH=. uv run python scripts/subject_history.py verify \
 
 `verify`は差分chainを順方向に適用した後、before値を使って逆方向にも復元し、件数・年度・canonical SHA-256を検証します。このツールはまだ自動更新workflowへは接続していません。
 
+momiji2へ履歴を保存する準備には`prepare_consumer_history.py`を使います。初回の構造検証済み世代を`data/history/<年度>/index.json`のbaselineにし、以後は既存chainを順逆に検証してから内容ハッシュ付き差分を追加します。indexは削除可能になった旧latestのファイル名も返しますが、現段階ではworkflowによる搬送・削除は行いません。
+
 ※ 実装後に詳細を調整します。
 
 ## テスト

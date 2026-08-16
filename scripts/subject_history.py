@@ -89,11 +89,21 @@ def _validate_subject_data(data: dict, source: str) -> None:
         raise ValueError("subject snapshot must contain exactly one academic year")
 
 
-def _validate_manifest(manifest: object) -> dict:
+def validate_manifest(manifest: object) -> dict:
     if not isinstance(manifest, dict):
         raise ValueError("manifest must be an object")
     if manifest.get("schemaVersion") != SCHEMA_VERSION:
         raise ValueError("manifest schemaVersion must be 1")
+    data_file = manifest.get("dataFile")
+    if (
+        not isinstance(data_file, str)
+        or Path(data_file).name != data_file
+        or not re.fullmatch(
+            r"subject_details_main_[A-Za-z0-9._-]+\.json",
+            data_file,
+        )
+    ):
+        raise ValueError("manifest dataFile must be a safe generation filename")
     structure_report = manifest.get("structureReport")
     if (
         not isinstance(structure_report, dict)
@@ -131,7 +141,7 @@ def _validate_manifest(manifest: object) -> dict:
 
 
 def validate_snapshot(data: object, manifest: object) -> dict:
-    manifest = _validate_manifest(manifest)
+    manifest = validate_manifest(manifest)
     if not isinstance(data, dict):
         raise ValueError("subject snapshot must be an object")
     _validate_subject_data(data, manifest["source"])

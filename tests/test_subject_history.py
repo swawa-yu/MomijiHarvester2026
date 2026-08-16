@@ -128,6 +128,14 @@ def test_rejects_cross_year_invalid_records_and_tampering():
             target, manifest(target, "2026-04-02"),
         )
 
+    unsafe_manifest = manifest(base, "2026-04-01")
+    unsafe_manifest["dataFile"] = "../outside.json"
+    with pytest.raises(ValueError, match="safe generation filename"):
+        create_diff(
+            base, unsafe_manifest,
+            target, manifest(target, "2026-04-02"),
+        )
+
     artifact = create_diff(
         base, manifest(base, "2026-04-01"),
         target, manifest(target, "2026-04-02"),
