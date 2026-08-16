@@ -136,14 +136,16 @@ jobs:
             echo "already_current=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Check the Harvester generation and require zero review findings
+      - name: Check the Harvester generation and record analysis
         if: inputs.mode == 'full' && steps.current.outputs.already_current != 'true'
         working-directory: ${{ runner.temp }}/momiji2
         env:
           MANIFEST_PATH: ${{ steps.crawl.outputs.manifest_path }}
           DEPARTMENTS_PATH: ${{ steps.crawl.outputs.departments_path }}
+          GUARD_REPORT_PATH: ${{ runner.temp }}/update-guard-report.json
         run: |
           node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';
           import { importHarvesterGeneration } from './scripts/import-harvester-generation.mjs';
 
           const result = await importHarvesterGeneration({
@@ -154,6 +156,10 @@ jobs:
           if (result.guardReport.hardFailures.length || result.guardReport.review.length) {
             throw new Error(`Update guard did not clear: ${JSON.stringify(result.guardReport)}`);
           }
+          await fs.writeFile(
+            process.env.GUARD_REPORT_PATH,
+            `${JSON.stringify(result.guardReport, null, 2)}\n`,
+          );
           console.log(JSON.stringify(result.guardReport, null, 2));
           NODE
 
@@ -306,19 +312,37 @@ jobs:
           RETRIEVED_AT: ${{ steps.crawl.outputs.retrieved_at }}
           SUBJECT_COUNT: ${{ steps.crawl.outputs.subject_count }}
           DATA_SHA256: ${{ steps.crawl.outputs.data_sha256 }}
+          GUARD_REPORT_PATH: ${{ runner.temp }}/update-guard-report.json
         run: |
           body_path="$RUNNER_TEMP/momiji2-update-pr.md"
-          cat > "$body_path" <<EOF
-          Automated manual-run import from MomijiHarvester2026.
+          python - "$body_path" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
 
-          - Academic year: ${YEAR}
-          - Retrieved at: ${RETRIEVED_AT}
-          - Subject count: ${SUBJECT_COUNT}
-          - Subject SHA-256: ${DATA_SHA256}
-          - Update guard: zero hard failures and zero review findings
+          report = json.loads(Path(os.environ["GUARD_REPORT_PATH"]).read_text())
+          analysis = report.get("analysis", [])
+          analysis_lines = (
+              "\n".join(f"- {item}" for item in analysis)
+              if analysis else "- 集合の増減なし"
+          )
+          body = f"""MomijiHarvester2026の手動実行から生成した更新です。
 
-          This workflow never uses --accept-review and never merges this PR.
-          EOF
+          - 年度: {os.environ["YEAR"]}
+          - 取得日: {os.environ["RETRIEVED_AT"]}
+          - 科目数: {os.environ["SUBJECT_COUNT"]}
+          - 科目データSHA-256: {os.environ["DATA_SHA256"]}
+          - 更新guard: hard failure 0件、要確認事項 0件
+
+          ## 値集合の変化（分析情報）
+
+          {analysis_lines}
+
+          このworkflowはPRを自動mergeしません。
+          """
+          Path(sys.argv[1]).write_text(body, encoding="utf-8")
+          PY
           gh pr create --repo swawa-yu/momiji2 --base develop --head "$BRANCH" \
-            --title "data: import ${YEAR} syllabus generation" \
+            --title "data: ${YEAR}年度シラバス生成物を更新" \
             --body-file "$body_path"
