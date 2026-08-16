@@ -11,6 +11,10 @@ on:
         options:
           - consumer-preflight
           - full
+      target_year:
+        description: Required for full mode (4-digit academic year)
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -44,10 +48,19 @@ jobs:
       - name: Crawl the complete Japanese syllabus
         if: inputs.mode == 'full'
         id: crawl
+        env:
+          TARGET_YEAR: ${{ inputs.target_year }}
         run: |
+          if [[ ! "$TARGET_YEAR" =~ ^[0-9]{4}$ ]]; then
+            echo "target_year must be a 4-digit year when mode is full." >&2
+            exit 1
+          fi
           output_dir="$RUNNER_TEMP/harvester-output"
           mkdir "$output_dir"
-          uv run python -m src.main run --output-dir "$output_dir" --max-subjects 0
+          uv run python -m src.main run \
+            --target-year "$TARGET_YEAR" \
+            --output-dir "$output_dir" \
+            --max-subjects 0
           python scripts/resolve_generation_artifacts.py \
             --output-dir "$output_dir" \
             --github-output "$GITHUB_OUTPUT"
