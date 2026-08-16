@@ -10,7 +10,6 @@ from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 from src.models import SubjectDetails
-from src.parser import Parser
 
 
 class Exporter:
@@ -170,6 +169,12 @@ class Exporter:
         header_presence = report["headerPresence"]
         if not isinstance(header_presence, dict):
             raise ValueError("subject structure headerPresence must be an object")
+        if any(
+            header not in header_presence for header in report["unknownHeaders"]
+        ):
+            raise ValueError(
+                "subject structure unknown headers must have header presence"
+            )
         for header, presence in header_presence.items():
             if not isinstance(header, str) or not isinstance(presence, dict):
                 raise ValueError("invalid subject structure header presence")

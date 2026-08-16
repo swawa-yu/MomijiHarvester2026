@@ -415,6 +415,8 @@ async def test_unknown_subject_header_preserves_existing_generation(
 
     assert "未知ヘッダー" in str(error.value)
     assert failing_url in str(error.value)
+    failing_index = crawler.fetch_order.index(failing_url)
+    assert crawler.fetch_order[failing_index + 1:] == []
     assert {
         path.name: path.read_bytes()
         for path in output_dir.iterdir()

@@ -2,6 +2,7 @@ from bs4 import BeautifulSoup
 from typing import Optional
 from src.models import SubjectDetails
 
+
 class SubjectStructureError(ValueError):
     """Raised when a subject page cannot be safely projected."""
 
@@ -119,6 +120,10 @@ class Parser:
             for label in raw
             if cls._normalize_subject_header(label) not in canonical_by_normalized
         )
+        unknown_values = {}
+        for label, value in cls._extract_subject_occurrences(html):
+            if cls._normalize_subject_header(label) not in canonical_by_normalized:
+                unknown_values.setdefault(label, []).append(value)
         normalized_occurrences = {}
         for label, value in cls._extract_subject_occurrences(html):
             normalized = cls._normalize_subject_header(label)
@@ -145,6 +150,9 @@ class Parser:
                 header
                 for header, values in observed_values.items()
                 if all(value == "" for value in values)
+            ) + sorted(
+                header for header, values in unknown_values.items()
+                if all(value == "" for value in values)
             ),
             "unknownHeaders": unknown_headers,
             "missingHeaders": missing_headers,
@@ -167,13 +175,12 @@ class Parser:
             for header in observation["observedHeaders"]:
                 presence_counts[header] += 1
             for header in observation["unknownHeaders"]:
+                presence_counts.setdefault(header, 0)
+                empty_counts.setdefault(header, 0)
                 presence_counts[header] += 1
             for header in observation["emptyHeaders"]:
                 empty_counts[header] += 1
             unknown_headers.update(observation["unknownHeaders"])
-            for header in observation["unknownHeaders"]:
-                presence_counts.setdefault(header, 0)
-                empty_counts.setdefault(header, 0)
 
         header_presence = {
             header: {
