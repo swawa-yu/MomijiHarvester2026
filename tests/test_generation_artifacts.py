@@ -13,15 +13,18 @@ from scripts.validate_consumer_update_diff import (
 )
 
 
-def write_generation(tmp_path: Path) -> tuple[Path, dict]:
-    data_file = "subject_details_main_2026-08-06_deadbeef.json"
-    data = '{"1": {"年度": "2026年度"}}\n'.encode("utf-8")
+def write_generation(
+    tmp_path: Path, year: int = 2026, retrieved_at: str = "2026-08-06"
+) -> tuple[Path, dict]:
+    academic_year = f"{year}年度"
+    data_file = f"subject_details_main_{year}-08-06_deadbeef.json"
+    data = json.dumps({"1": {"年度": academic_year}}).encode("utf-8") + b"\n"
     (tmp_path / data_file).write_bytes(data)
     manifest = {
         "schemaVersion": 1,
         "dataFile": data_file,
-        "academicYear": "2026年度",
-        "retrievedAt": "2026-08-06",
+        "academicYear": academic_year,
+        "retrievedAt": retrieved_at,
         "subjectCount": 1,
         "source": "https://example.test/",
     }
@@ -80,6 +83,26 @@ def test_resolve_artifacts_returns_verified_generation(tmp_path: Path):
         manifest["structureReport"]["dataFile"]
     )
     assert result["structure_sha256"] == manifest["structureReport"]["sha256"]
+
+
+def test_resolve_artifacts_returns_verified_2027_generation(tmp_path: Path):
+    output_dir, manifest = write_generation(
+        tmp_path, year=2027, retrieved_at="2027-08-06"
+    )
+
+    result = resolve_artifacts(output_dir)
+
+    assert result["year"] == "2027"
+    assert result["academic_year"] == "2027年度"
+    assert result["data_file"] == "subject_details_main_2027-08-06_deadbeef.json"
+    assert result["data_file"] == manifest["dataFile"]
+    assert result["subject_count"] == 1
+    assert Path(result["departments_path"]).name == (
+        "department_constants_generation.json"
+    )
+    assert Path(result["structure_path"]).name == (
+        "subject_structure_generation.json"
+    )
 
 
 def test_resolve_artifacts_rejects_structure_report_from_other_generation(
