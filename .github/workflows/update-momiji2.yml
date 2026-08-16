@@ -205,7 +205,7 @@ jobs:
             data/subjectDataManifest.json "$INCOMING_MANIFEST" > "$artifact"
           echo "artifact_path=$artifact" >> "$GITHUB_OUTPUT"
 
-      - name: Prepare the verified same-year history update
+      - name: Prepare the verified history update
         if: inputs.mode == 'full' && steps.current.outputs.already_current != 'true'
         id: history
         run: |
@@ -213,6 +213,7 @@ jobs:
             --consumer-data-dir "$RUNNER_TEMP/momiji2/data" \
             --incoming-manifest "${{ steps.crawl.outputs.manifest_path }}" \
             --classification-artifact "${{ steps.classification.outputs.artifact_path }}" \
+            --update-kind "${{ inputs.update_kind }}" \
             --github-output "$GITHUB_OUTPUT"
 
       - name: Import, generate, and verify the consumer update
@@ -223,6 +224,7 @@ jobs:
           DEPARTMENTS_PATH: ${{ steps.crawl.outputs.departments_path }}
           DATA_FILE: ${{ steps.crawl.outputs.data_file }}
           HISTORY_INDEX: ${{ steps.history.outputs.indexRelativePath }}
+          PREVIOUS_HISTORY_INDEX: ${{ steps.history.outputs.previousIndexRelativePath }}
           HISTORY_ARTIFACT: ${{ steps.history.outputs.artifactRelativePath }}
           CLASSIFICATION_ARTIFACT: ${{ steps.history.outputs.classificationRelativePath }}
           OBSOLETE_DATA_FILE: ${{ steps.history.outputs.obsoleteDataFile }}
@@ -243,6 +245,10 @@ jobs:
           pnpm prebuild
           history_args=(--history-path "$HISTORY_INDEX")
           paths=("data/$DATA_FILE" "$HISTORY_INDEX")
+          if test -n "$PREVIOUS_HISTORY_INDEX"; then
+            history_args+=(--history-path "$PREVIOUS_HISTORY_INDEX")
+            paths+=("$PREVIOUS_HISTORY_INDEX")
+          fi
           if test -n "$HISTORY_ARTIFACT"; then
             history_args+=(--history-path "$HISTORY_ARTIFACT")
             paths+=("$HISTORY_ARTIFACT")
@@ -274,6 +280,7 @@ jobs:
           DATA_SHA256: ${{ steps.crawl.outputs.data_sha256 }}
           MANIFEST_PATH: ${{ steps.crawl.outputs.manifest_path }}
           HISTORY_INDEX: ${{ steps.history.outputs.indexRelativePath }}
+          PREVIOUS_HISTORY_INDEX: ${{ steps.history.outputs.previousIndexRelativePath }}
           HISTORY_ARTIFACT: ${{ steps.history.outputs.artifactRelativePath }}
           CLASSIFICATION_ARTIFACT: ${{ steps.history.outputs.classificationRelativePath }}
           OBSOLETE_DATA_FILE: ${{ steps.history.outputs.obsoleteDataFile }}
@@ -301,6 +308,11 @@ jobs:
           git show "origin/$BRANCH:$HISTORY_INDEX" > "$RUNNER_TEMP/existing-history-index.json"
           cmp "$HISTORY_INDEX" "$RUNNER_TEMP/existing-history-index.json"
           history_args=(--history-path "$HISTORY_INDEX")
+          if test -n "$PREVIOUS_HISTORY_INDEX"; then
+            git show "origin/$BRANCH:$PREVIOUS_HISTORY_INDEX" > "$RUNNER_TEMP/existing-previous-history-index.json"
+            cmp "$PREVIOUS_HISTORY_INDEX" "$RUNNER_TEMP/existing-previous-history-index.json"
+            history_args+=(--history-path "$PREVIOUS_HISTORY_INDEX")
+          fi
           if test -n "$HISTORY_ARTIFACT"; then
             git show "origin/$BRANCH:$HISTORY_ARTIFACT" > "$RUNNER_TEMP/existing-history-artifact.json"
             cmp "$HISTORY_ARTIFACT" "$RUNNER_TEMP/existing-history-artifact.json"
@@ -378,6 +390,7 @@ jobs:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
           HISTORY_INDEX: ${{ steps.history.outputs.indexRelativePath }}
+          PREVIOUS_HISTORY_INDEX: ${{ steps.history.outputs.previousIndexRelativePath }}
           HISTORY_ARTIFACT: ${{ steps.history.outputs.artifactRelativePath }}
           CLASSIFICATION_ARTIFACT: ${{ steps.history.outputs.classificationRelativePath }}
           OBSOLETE_DATA_FILE: ${{ steps.history.outputs.obsoleteDataFile }}
@@ -387,6 +400,9 @@ jobs:
           git config user.name "${APP_SLUG}[bot]"
           git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
           paths=("data/${{ steps.crawl.outputs.data_file }}" "$HISTORY_INDEX")
+          if test -n "$PREVIOUS_HISTORY_INDEX"; then
+            paths+=("$PREVIOUS_HISTORY_INDEX")
+          fi
           if test -n "$HISTORY_ARTIFACT"; then
             paths+=("$HISTORY_ARTIFACT")
           fi
@@ -443,7 +459,7 @@ jobs:
           - 科目数: {os.environ["SUBJECT_COUNT"]}
           - 科目データSHA-256: {os.environ["DATA_SHA256"]}
           - 更新guard: hard failure 0件、要確認事項 0件
-          - 年度内履歴: {os.environ["HISTORY_MODE"]}
+          - 履歴更新モード: {os.environ["HISTORY_MODE"]}
 
           ## 値集合の変化（分析情報）
 

@@ -60,7 +60,7 @@ uv run python -m src.main run --target-year 2027 --output-dir output
 
 指定時は、その年度の学部・科目URLと詳細本文だけを対象にします。未指定時は年度混在を停止します。
 
-自動更新workflowを手動実行する場合、`mode=full`では`target_year`に4桁の年度と`update_kind`（`same-year`または`year-rollover`）を指定します。fullではcrawl前にmomiji2/developをcloneし、manifestの現行年度と照合します。`same-year`は同年度だけ、`year-rollover`は現行年度の翌年度だけを許可し、それ以外はcrawlを開始せず停止します。`mode=consumer-preflight`では年度入力を使用せず、crawlも行いません。なお、後段のconsumer rollover取り込み対応は未実装のため、`year-rollover`は履歴処理で安全停止する場合があります。
+自動更新workflowを手動実行する場合、`mode=full`では`target_year`に4桁の年度と`update_kind`（`same-year`または`year-rollover`）を指定します。fullではcrawl前にmomiji2/developをcloneし、manifestの現行年度と照合します。`same-year`は同年度だけ、`year-rollover`は現行年度の翌年度だけを許可し、それ以外はcrawlを開始せず停止します。`mode=consumer-preflight`では年度入力を使用せず、crawlも行いません。`year-rollover`の履歴取り込みはfixtureとguard上でworkflowの生成・検証・既存branch照合・commit対象まで接続済みですが、live workflow実行では未検証で、自動mergeは行いません。
 
 詳細ページの取得前に、全学部ページの候補URLを集計して年度、候補出現数、全体で一意なURL数、重複出現数を表示します。重複URLは最初に現れた学部情報を採用して1回だけ取得し、`--max-subjects` は一意なURLに対して適用します。`--dry-run` はこの事前集計までを行い、詳細ページの取得やファイル出力は行いません。年度が混在する場合や候補から年度を特定できない場合は、詳細ページ取得前に停止します。
 
