@@ -1,6 +1,7 @@
 import asyncio
 import json
 from pathlib import Path
+from typing import Optional
 
 import typer
 from src.crawler import MomijiCrawler
@@ -15,7 +16,7 @@ def run(
     ),
     output_dir: str = typer.Option("output", help="JSON出力ディレクトリ"),
     max_subjects: int = typer.Option(20, help="取得上限(0は無制限; デフォルト20)"),
-    target_year: str | None = typer.Option(
+    target_year: Optional[str] = typer.Option(
         None, help="取得対象年度（4桁。未指定時は候補の年度混在を拒否）"
     ),
     include_english: bool = typer.Option(

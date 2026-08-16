@@ -2,7 +2,7 @@ import asyncio
 import re
 import sys
 from urllib.parse import urljoin
-from typing import List, Dict
+from typing import Dict, List, Optional
 
 from src.client import HttpClient
 from src.config import ScraperConfig
@@ -28,7 +28,11 @@ class MomijiCrawler:
         await asyncio.sleep(self.config.rate_limit_seconds)
         return response.text
 
-    def collect_faculty_urls_from_html(self, html: str, target_year: str | None = None) -> List[str]:
+    def collect_faculty_urls_from_html(
+        self,
+        html: str,
+        target_year: Optional[str] = None,
+    ) -> List[str]:
         soup = Parser.get_html_soup(html)
 
         faculty_pattern = re.compile(r"^\d{4}_[A-Za-z0-9]+(?:_en)?\.html$")
@@ -62,7 +66,10 @@ class MomijiCrawler:
 
         return links
 
-    async def collect_faculty_urls(self, target_year: str | None = None) -> List[str]:
+    async def collect_faculty_urls(
+        self,
+        target_year: Optional[str] = None,
+    ) -> List[str]:
         html = await self.fetch_html(self.config.base_url)
         return self.collect_faculty_urls_from_html(html, target_year=target_year)
 
@@ -70,7 +77,11 @@ class MomijiCrawler:
         html = await self.fetch_html(self.config.base_url)
         return Parser.parse_department_lists(html)
 
-    async def collect_subject_urls(self, faculty_url: str, target_year: str | None = None) -> List[str]:
+    async def collect_subject_urls(
+        self,
+        faculty_url: str,
+        target_year: Optional[str] = None,
+    ) -> List[str]:
         html = await self.fetch_html(faculty_url)
         soup = Parser.get_html_soup(html)
 
@@ -109,7 +120,10 @@ class MomijiCrawler:
         return links
 
     @staticmethod
-    def preflight_subject_urls(subject_batches, target_year: str | None = None):
+    def preflight_subject_urls(
+        subject_batches,
+        target_year: Optional[str] = None,
+    ):
         occurrences = []
         years = set()
         for _, faculty_name, subject_urls in subject_batches:
@@ -175,8 +189,12 @@ class MomijiCrawler:
             faculty_name,
         )
 
-    async def run(self, max_subjects: int = 20, dry_run: bool = False,
-                  target_year: str | None = None):
+    async def run(
+        self,
+        max_subjects: int = 20,
+        dry_run: bool = False,
+        target_year: Optional[str] = None,
+    ):
         try:
             if target_year is not None and not re.fullmatch(r"\d{4}", target_year):
                 raise ValueError("target_year must be a 4-digit year")
@@ -214,7 +232,10 @@ class MomijiCrawler:
                     ) from e
                 subject_batches.append((faculty_url, faculty_name, subject_urls))
 
-            preflight = self.preflight_subject_urls(subject_batches, target_year=target_year)
+            preflight = self.preflight_subject_urls(
+                subject_batches,
+                target_year=target_year,
+            )
             print(
                 "Preflight: "
                 f"academic year={preflight['academicYear']}, "
@@ -250,7 +271,10 @@ class MomijiCrawler:
                             subject_url,
                             faculty_name,
                         )
-                        if target_year is not None and subject.nendo != f"{target_year}年度":
+                        if (
+                            target_year is not None
+                            and subject.nendo != f"{target_year}年度"
+                        ):
                             raise ValueError(
                                 f"Subject academic year mismatch: expected {target_year}年度, "
                                 f"found {subject.nendo} at {subject_url}"
