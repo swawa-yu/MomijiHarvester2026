@@ -86,6 +86,28 @@ def test_history_lifecycle_and_obsolete_latest(tmp_path: Path):
     assert canonical_sha256(restored) == canonical_sha256(final)
 
 
+def test_initialization_keeps_same_year_legacy_regression_fixture(tmp_path: Path):
+    consumer_data = tmp_path / "consumer" / "data"
+    consumer_data.mkdir(parents=True)
+    incoming = tmp_path / "incoming"
+    base, target = snapshots()
+    legacy_manifest = manifest(base, "2026-04-01")
+    legacy_manifest.pop("schemaVersion")
+    legacy_manifest.pop("structureReport")
+    (consumer_data / legacy_manifest["dataFile"]).write_text(
+        json.dumps(base), encoding="utf-8"
+    )
+    (consumer_data / "subjectDataManifest.json").write_text(
+        json.dumps(legacy_manifest), encoding="utf-8"
+    )
+    incoming_manifest = write_generation(incoming, target, "2026-04-02")
+
+    result = prepare_history_update(consumer_data, incoming_manifest)
+
+    assert result["mode"] == "initialize"
+    assert result["obsoleteDataFile"] is None
+
+
 def test_rejects_tampered_chain_and_cross_year_update(tmp_path: Path):
     consumer_data = tmp_path / "consumer" / "data"
     consumer_data.mkdir(parents=True)

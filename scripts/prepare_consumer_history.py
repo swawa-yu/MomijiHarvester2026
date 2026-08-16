@@ -192,7 +192,9 @@ def prepare_history_update(
         return {
             "mode": "initialize",
             "indexPath": str(index_path),
+            "indexRelativePath": f"data/history/{year}/index.json",
             "artifactPath": None,
+            "artifactRelativePath": None,
             "obsoleteDataFile": None,
         }
 
@@ -263,7 +265,11 @@ def prepare_history_update(
     return {
         "mode": "append",
         "indexPath": str(index_path),
+        "indexRelativePath": f"data/history/{year}/index.json",
         "artifactPath": str(artifact_path),
+        "artifactRelativePath": (
+            f"data/history/{year}/{artifact_filename}"
+        ),
         "obsoleteDataFile": obsolete,
     }
 

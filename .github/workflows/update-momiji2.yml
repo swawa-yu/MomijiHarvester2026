@@ -163,6 +163,15 @@ jobs:
           console.log(JSON.stringify(result.guardReport, null, 2));
           NODE
 
+      - name: Prepare the verified same-year history update
+        if: inputs.mode == 'full' && steps.current.outputs.already_current != 'true'
+        id: history
+        run: |
+          python scripts/prepare_consumer_history.py \
+            --consumer-data-dir "$RUNNER_TEMP/momiji2/data" \
+            --incoming-manifest "${{ steps.crawl.outputs.manifest_path }}" \
+            --github-output "$GITHUB_OUTPUT"
+
       - name: Import, generate, and verify the consumer update
         if: inputs.mode == 'full' && steps.current.outputs.already_current != 'true'
         working-directory: ${{ runner.temp }}/momiji2
@@ -170,8 +179,14 @@ jobs:
           MANIFEST_PATH: ${{ steps.crawl.outputs.manifest_path }}
           DEPARTMENTS_PATH: ${{ steps.crawl.outputs.departments_path }}
           DATA_FILE: ${{ steps.crawl.outputs.data_file }}
+          HISTORY_INDEX: ${{ steps.history.outputs.indexRelativePath }}
+          HISTORY_ARTIFACT: ${{ steps.history.outputs.artifactRelativePath }}
+          OBSOLETE_DATA_FILE: ${{ steps.history.outputs.obsoleteDataFile }}
         run: |
           pnpm import:harvester-generation --manifest "$MANIFEST_PATH" --departments "$DEPARTMENTS_PATH"
+          if test -n "$OBSOLETE_DATA_FILE"; then
+            rm -- "data/$OBSOLETE_DATA_FILE"
+          fi
           pnpm generate:subject-constants
           pnpm validate:data
           pnpm check:subject-constants
@@ -182,9 +197,19 @@ jobs:
           pnpm test:raw-subject-contract
           pnpm exec tsc --noEmit
           pnpm prebuild
+          history_args=(--history-path "$HISTORY_INDEX")
+          paths=("data/$DATA_FILE" "$HISTORY_INDEX")
+          if test -n "$HISTORY_ARTIFACT"; then
+            history_args+=(--history-path "$HISTORY_ARTIFACT")
+            paths+=("$HISTORY_ARTIFACT")
+          fi
+          if test -n "$OBSOLETE_DATA_FILE"; then
+            history_args+=(--obsolete-data-file "$OBSOLETE_DATA_FILE")
+            paths+=("data/$OBSOLETE_DATA_FILE")
+          fi
           python "$GITHUB_WORKSPACE/scripts/validate_consumer_update_diff.py" \
-            --consumer . --data-file "$DATA_FILE"
-          git add --intent-to-add -- "data/$DATA_FILE" \
+            --consumer . --data-file "$DATA_FILE" "${history_args[@]}"
+          git add --intent-to-add -- "${paths[@]}" \
             data/subjectDataManifest.json data/department_constants.json \
             data/subject_structure.json \
             data/derivedSubjectConstants.json src/types/subjectConstants.ts \
@@ -200,6 +225,9 @@ jobs:
           DATA_FILE: ${{ steps.crawl.outputs.data_file }}
           DATA_SHA256: ${{ steps.crawl.outputs.data_sha256 }}
           MANIFEST_PATH: ${{ steps.crawl.outputs.manifest_path }}
+          HISTORY_INDEX: ${{ steps.history.outputs.indexRelativePath }}
+          HISTORY_ARTIFACT: ${{ steps.history.outputs.artifactRelativePath }}
+          OBSOLETE_DATA_FILE: ${{ steps.history.outputs.obsoleteDataFile }}
         run: |
           git fetch origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
           git cat-file -e "origin/$BRANCH:data/$DATA_FILE"
@@ -221,9 +249,21 @@ jobs:
           if any(actual.get(field) != expected.get(field) for field in fields):
               raise SystemExit("existing branch manifest does not match the incoming generation")
           PY
+          git show "origin/$BRANCH:$HISTORY_INDEX" > "$RUNNER_TEMP/existing-history-index.json"
+          cmp "$HISTORY_INDEX" "$RUNNER_TEMP/existing-history-index.json"
+          history_args=(--history-path "$HISTORY_INDEX")
+          if test -n "$HISTORY_ARTIFACT"; then
+            git show "origin/$BRANCH:$HISTORY_ARTIFACT" > "$RUNNER_TEMP/existing-history-artifact.json"
+            cmp "$HISTORY_ARTIFACT" "$RUNNER_TEMP/existing-history-artifact.json"
+            history_args+=(--history-path "$HISTORY_ARTIFACT")
+          fi
+          if test -n "$OBSOLETE_DATA_FILE"; then
+            history_args+=(--obsolete-data-file "$OBSOLETE_DATA_FILE")
+          fi
           python "$GITHUB_WORKSPACE/scripts/validate_consumer_update_diff.py" \
             --consumer . --data-file "$DATA_FILE" \
-            --base-ref origin/develop --head-ref "origin/$BRANCH"
+            --base-ref origin/develop --head-ref "origin/$BRANCH" \
+            "${history_args[@]}"
           git worktree add --detach "$RUNNER_TEMP/momiji2-existing" "origin/$BRANCH"
           cd "$RUNNER_TEMP/momiji2-existing"
           pnpm install --frozen-lockfile
@@ -283,12 +323,22 @@ jobs:
           YEAR: ${{ steps.crawl.outputs.year }}
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          HISTORY_INDEX: ${{ steps.history.outputs.indexRelativePath }}
+          HISTORY_ARTIFACT: ${{ steps.history.outputs.artifactRelativePath }}
+          OBSOLETE_DATA_FILE: ${{ steps.history.outputs.obsoleteDataFile }}
         run: |
           git switch -c "$BRANCH"
           bot_id="$(GH_TOKEN="$APP_TOKEN" gh api "/users/${APP_SLUG}%5Bbot%5D" --jq .id)"
           git config user.name "${APP_SLUG}[bot]"
           git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
-          git add -- "data/${{ steps.crawl.outputs.data_file }}" \
+          paths=("data/${{ steps.crawl.outputs.data_file }}" "$HISTORY_INDEX")
+          if test -n "$HISTORY_ARTIFACT"; then
+            paths+=("$HISTORY_ARTIFACT")
+          fi
+          if test -n "$OBSOLETE_DATA_FILE"; then
+            paths+=("data/$OBSOLETE_DATA_FILE")
+          fi
+          git add -- "${paths[@]}" \
             data/subjectDataManifest.json data/department_constants.json \
             data/subject_structure.json \
             data/derivedSubjectConstants.json src/types/subjectConstants.ts \
@@ -313,6 +363,7 @@ jobs:
           SUBJECT_COUNT: ${{ steps.crawl.outputs.subject_count }}
           DATA_SHA256: ${{ steps.crawl.outputs.data_sha256 }}
           GUARD_REPORT_PATH: ${{ runner.temp }}/update-guard-report.json
+          HISTORY_MODE: ${{ steps.history.outputs.mode }}
         run: |
           body_path="$RUNNER_TEMP/momiji2-update-pr.md"
           python - "$body_path" <<'PY'
@@ -334,6 +385,7 @@ jobs:
           - 科目数: {os.environ["SUBJECT_COUNT"]}
           - 科目データSHA-256: {os.environ["DATA_SHA256"]}
           - 更新guard: hard failure 0件、要確認事項 0件
+          - 年度内履歴: {os.environ["HISTORY_MODE"]}
 
           ## 値集合の変化（分析情報）
 
