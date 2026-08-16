@@ -28,7 +28,7 @@ class MomijiCrawler:
         await asyncio.sleep(self.config.rate_limit_seconds)
         return response.text
 
-    def collect_faculty_urls_from_html(self, html: str) -> List[str]:
+    def collect_faculty_urls_from_html(self, html: str, target_year: str | None = None) -> List[str]:
         soup = Parser.get_html_soup(html)
 
         faculty_pattern = re.compile(r"^\d{4}_[A-Za-z0-9]+(?:_en)?\.html$")
@@ -46,6 +46,9 @@ class MomijiCrawler:
                 self.faculty_link_status[href] = "rejected:index"
                 continue
             if faculty_pattern.match(href):
+                if target_year is not None and not href.startswith(f"{target_year}_"):
+                    self.faculty_link_status[href] = "rejected:target year"
+                    continue
                 full_url = urljoin(self.config.base_url, href)
                 if full_url not in seen:
                     seen.add(full_url)
@@ -59,15 +62,15 @@ class MomijiCrawler:
 
         return links
 
-    async def collect_faculty_urls(self) -> List[str]:
+    async def collect_faculty_urls(self, target_year: str | None = None) -> List[str]:
         html = await self.fetch_html(self.config.base_url)
-        return self.collect_faculty_urls_from_html(html)
+        return self.collect_faculty_urls_from_html(html, target_year=target_year)
 
     async def collect_department_lists(self) -> dict[str, list[str]]:
         html = await self.fetch_html(self.config.base_url)
         return Parser.parse_department_lists(html)
 
-    async def collect_subject_urls(self, faculty_url: str) -> List[str]:
+    async def collect_subject_urls(self, faculty_url: str, target_year: str | None = None) -> List[str]:
         html = await self.fetch_html(faculty_url)
         soup = Parser.get_html_soup(html)
 
@@ -90,6 +93,9 @@ class MomijiCrawler:
                 self.subject_link_status[href] = "rejected:english"
                 continue
             if subject_pattern.match(href):
+                if target_year is not None and not href.startswith(f"{target_year}_"):
+                    self.subject_link_status[href] = "rejected:target year"
+                    continue
                 full_url = urljoin(faculty_url, href)
                 # Keep every occurrence for preflight accounting. Global
                 # deduplication happens after all faculty pages are inspected.
@@ -103,7 +109,7 @@ class MomijiCrawler:
         return links
 
     @staticmethod
-    def preflight_subject_urls(subject_batches):
+    def preflight_subject_urls(subject_batches, target_year: str | None = None):
         occurrences = []
         years = set()
         for _, faculty_name, subject_urls in subject_batches:
@@ -121,7 +127,12 @@ class MomijiCrawler:
             raise ValueError(
                 "Preflight failed: no academic year found in subject URL candidates."
             )
-        if len(years) != 1:
+        if target_year is not None and years != {target_year}:
+            raise ValueError(
+                f"Preflight failed: expected target academic year {target_year}, found "
+                f"{', '.join(sorted(years))}."
+            )
+        if target_year is None and len(years) != 1:
             raise ValueError(
                 "Preflight failed: expected exactly one academic year, found "
                 f"{', '.join(sorted(years))}."
@@ -164,8 +175,11 @@ class MomijiCrawler:
             faculty_name,
         )
 
-    async def run(self, max_subjects: int = 20, dry_run: bool = False):
+    async def run(self, max_subjects: int = 20, dry_run: bool = False,
+                  target_year: str | None = None):
         try:
+            if target_year is not None and not re.fullmatch(r"\d{4}", target_year):
+                raise ValueError("target_year must be a 4-digit year")
             if self.include_english:
                 raise ValueError(
                     "include_english is unsupported: Japanese and English "
@@ -173,7 +187,12 @@ class MomijiCrawler:
                     "will require a dedicated output contract."
                 )
             top_page_html = await self.fetch_html(self.config.base_url)
-            faculty_urls = self.collect_faculty_urls_from_html(top_page_html)
+            if target_year is None:
+                faculty_urls = self.collect_faculty_urls_from_html(top_page_html)
+            else:
+                faculty_urls = self.collect_faculty_urls_from_html(
+                    top_page_html, target_year=target_year
+                )
             departments = Parser.parse_department_lists(top_page_html)
             result: Dict[str, SubjectDetails] = {}
             subject_batches = []
@@ -185,7 +204,9 @@ class MomijiCrawler:
             for faculty_url in faculty_urls:
                 faculty_name = faculty_url.split("/")[-1].replace(".html", "")
                 try:
-                    subject_urls = await self.collect_subject_urls(faculty_url)
+                    subject_urls = await self.collect_subject_urls(
+                        faculty_url, target_year=target_year
+                    )
                 except Exception as e:
                     raise RuntimeError(
                         "Preflight failed while collecting subject URL "
@@ -193,7 +214,7 @@ class MomijiCrawler:
                     ) from e
                 subject_batches.append((faculty_url, faculty_name, subject_urls))
 
-            preflight = self.preflight_subject_urls(subject_batches)
+            preflight = self.preflight_subject_urls(subject_batches, target_year=target_year)
             print(
                 "Preflight: "
                 f"academic year={preflight['academicYear']}, "
@@ -229,6 +250,11 @@ class MomijiCrawler:
                             subject_url,
                             faculty_name,
                         )
+                        if target_year is not None and subject.nendo != f"{target_year}年度":
+                            raise ValueError(
+                                f"Subject academic year mismatch: expected {target_year}年度, "
+                                f"found {subject.nendo} at {subject_url}"
+                            )
                     except Exception as e:
                         print(f"Failed to process {subject_url}: {e}")
                         failures.append((subject_url, e))
