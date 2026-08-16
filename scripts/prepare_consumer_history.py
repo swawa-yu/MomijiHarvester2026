@@ -189,6 +189,8 @@ def _prepare_classification_artifact(
     payload = artifact_path.read_bytes()
     artifact = read_json(artifact_path, "classification artifact")
     expected_keys = {"schemaVersion", "comparisonType", "base", "target", "fields"}
+    if isinstance(artifact, dict) and "schemaVersion" not in artifact:
+        raise ValueError("classification artifact schemaVersion must be 1 or 2")
     if not isinstance(artifact, dict) or set(artifact) != expected_keys:
         raise ValueError("classification artifact has an invalid contract")
     schema_version = artifact["schemaVersion"]
