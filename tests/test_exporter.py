@@ -151,6 +151,17 @@ def test_exporter_rejects_unknown_header_without_presence_entry(tmp_path: Path):
         )
 
 
+def test_exporter_rejects_unknown_header_not_observed(tmp_path: Path):
+    report = structure_report()
+    report["unknownHeaders"] = ["追加項目"]
+    with pytest.raises(ValueError, match="observed headers"):
+        Exporter(str(tmp_path)).export(
+            {"10000100": subject()},
+            source="https://example.test/",
+            subject_structure_report=report,
+        )
+
+
 @pytest.mark.parametrize("mutate, message", [
     (lambda report: report.update({"subjectPageCount": 2}), "page count"),
     (
