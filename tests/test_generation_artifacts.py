@@ -85,6 +85,29 @@ def test_resolve_artifacts_returns_verified_generation(tmp_path: Path):
     assert result["structure_sha256"] == manifest["structureReport"]["sha256"]
 
 
+def test_resolve_artifacts_accepts_verified_unknown_header(tmp_path: Path):
+    output_dir, manifest = write_generation(tmp_path)
+    structure_path = output_dir / manifest["structureReport"]["dataFile"]
+    structure = json.loads(structure_path.read_text(encoding="utf-8"))
+    structure["structure"].update({
+        "observedHeaders": ["追加項目"],
+        "unknownHeaders": ["追加項目"],
+        "headerPresence": {
+            "追加項目": {
+                "presentCount": 1, "presenceRate": 1.0,
+                "emptyCount": 0, "emptyRate": 0.0,
+            }
+        },
+    })
+    payload = json.dumps(structure).encode("utf-8")
+    structure_path.write_bytes(payload)
+    manifest["structureReport"]["sha256"] = hashlib.sha256(payload).hexdigest()
+    (output_dir / "subjectDataManifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    assert resolve_artifacts(output_dir)["subject_count"] == 1
+
+
 def test_resolve_artifacts_returns_verified_2027_generation(tmp_path: Path):
     output_dir, manifest = write_generation(
         tmp_path, year=2027, retrieved_at="2027-08-06"

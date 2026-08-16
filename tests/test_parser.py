@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from src.parser import Parser
+from src.parser import Parser, SubjectStructureError
 from src.models import SubjectDetails
 
 
@@ -40,6 +40,43 @@ def test_parse_subject_page_minimal():
     assert subject.code == "10000100"
     assert subject.nendo == "2025年度"
     assert subject.faculty == "教養教育"
+
+
+def test_unknown_header_is_projected_out_of_subject():
+    subject = Parser.parse_subject_page(
+        subject_page(extra=(("追加項目", "秘密の値"),)),
+        "extra.html",
+        "教養教育",
+    )
+    assert len(subject.model_dump(by_alias=True)) == 19
+    assert "追加項目" not in subject.model_dump(by_alias=True)
+
+
+def test_structure_summary_counts_unknown_empty_and_informational_headers():
+    extra = (("追加項目", ""),) + tuple(
+        (header, "説明") for header in Parser.INFORMATIONAL_HEADERS
+    )
+    _, first = Parser.inspect_subject_page_structure(
+        subject_page(extra=extra), "first.html"
+    )
+    _, second = Parser.inspect_subject_page_structure(
+        subject_page(extra=(("追加項目", "値"),)), "second.html"
+    )
+    report = Parser.summarize_subject_page_structures([first, second])
+    assert report["unknownHeaders"] == ["追加項目"]
+    assert report["headerPresence"]["追加項目"] == {
+        "presentCount": 2, "presenceRate": 1,
+        "emptyCount": 1, "emptyRate": 0.5,
+    }
+    for header in Parser.INFORMATIONAL_HEADERS:
+        assert header not in report["unknownHeaders"]
+        assert report["headerPresence"][header]["presentCount"] == 1
+
+
+def test_duplicate_required_header_with_different_values_is_fatal():
+    html = subject_page() + "<table><tr><th>年度</th><td>2025年度</td></tr></table>"
+    with pytest.raises(SubjectStructureError):
+        Parser.parse_subject_page(html, "duplicate.html", "教養教育")
 
 
 def test_inspect_subject_structure_detects_added_removed_and_renamed_headers():

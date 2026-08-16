@@ -3,6 +3,10 @@ from typing import Optional
 from src.models import SubjectDetails
 
 
+class SubjectStructureError(ValueError):
+    """Raised when a subject page cannot be safely projected."""
+
+
 class Parser:
     SUBJECT_CONTRACT_HEADERS = (
         "年度", "開講部局", "講義コード", "科目区分", "授業科目名",
@@ -20,6 +24,10 @@ class Parser:
         "授業で使用する メディア・機器等", "授業で取り入れる 学習手法",
         "授業のキーワード", "【詳細情報】", "English",
     )
+    INFORMATIONAL_HEADERS = (
+        "プログラムの中での この授業科目の位置づけ （学部生対象科目のみ）",
+        "到達度評価 の評価項目 （学部生対象科目のみ）",
+    )
 
     @staticmethod
     def get_html_soup(html: str) -> BeautifulSoup:
@@ -36,35 +44,33 @@ class Parser:
         )
 
     @staticmethod
-    def _extract_subject_raw(html: str) -> dict[str, str]:
+    def _extract_subject_occurrences(html: str) -> list[tuple[str, str]]:
         soup = Parser.get_html_soup(html)
-        raw = {}
+        occurrences = []
         for tr in soup.select("table tr"):
-            ths = tr.select("th")
-            tds = tr.select("td")
+            ths, tds = tr.select("th"), tr.select("td")
             if not ths or not tds:
                 continue
-
-            if len(ths) == len(tds):
-                for th, td in zip(ths, tds):
-                    label = th.get_text(separator=" ", strip=True).replace("\u3000", " ").strip()
-                    value = td.get_text(separator=" ", strip=True).strip()
-                    if label:
-                        raw[label] = value
-            elif len(ths) == 1:
-                label = ths[0].get_text(separator=" ", strip=True).replace("\u3000", " ").strip()
-                value = " ".join(td.get_text(separator=" ", strip=True) for td in tds).strip()
-                if label:
-                    raw[label] = value
+            if len(ths) != len(tds) and len(ths) != 1:
+                raise SubjectStructureError("Ambiguous th/td correspondence")
+            if len(ths) == 1:
+                pairs = [(ths[0], tds[0] if len(tds) == 1 else None)]
+                if pairs[0][1] is None:
+                    value = " ".join(
+                        td.get_text(separator=" ", strip=True) for td in tds
+                    ).strip()
+                    occurrences.append((
+                        ths[0].get_text(separator=" ", strip=True), value
+                    ))
+                    continue
             else:
-                # それ以外の場合、見出しと値を対応させる
-                pair_count = min(len(ths), len(tds))
-                for i in range(pair_count):
-                    label = ths[i].get_text(separator=" ", strip=True).replace("\u3000", " ").strip()
-                    value = tds[i].get_text(separator=" ", strip=True).strip()
-                    if label:
-                        raw[label] = value
-        return raw
+                pairs = zip(ths, tds)
+            for th, td in pairs:
+                occurrences.append((
+                    th.get_text(separator=" ", strip=True),
+                    td.get_text(separator=" ", strip=True),
+                ))
+        return occurrences
 
     @classmethod
     def inspect_subject_page_structure(
@@ -72,24 +78,45 @@ class Parser:
         html: str,
         source_url: str,
     ) -> tuple[dict[str, str], dict[str, object]]:
-        raw = cls._extract_subject_raw(html)
-        known_headers = cls.SUBJECT_CONTRACT_HEADERS + cls.LEGACY_SOURCE_HEADERS
+        occurrences = cls._extract_subject_occurrences(html)
+        raw = {label: value for label, value in occurrences}
+        known_headers = (
+            cls.SUBJECT_CONTRACT_HEADERS + cls.LEGACY_SOURCE_HEADERS
+            + cls.INFORMATIONAL_HEADERS
+        )
         canonical_by_normalized = {
             cls._normalize_subject_header(header): header
             for header in known_headers
         }
         observed_values = {}
-        for label, value in raw.items():
+        for label, value in occurrences:
             normalized = cls._normalize_subject_header(label)
             if normalized in canonical_by_normalized:
                 canonical = canonical_by_normalized[normalized]
                 observed_values.setdefault(canonical, []).append(value)
         observed_headers = set(observed_values)
-        unknown_headers = sorted(
-            label
-            for label in raw
+        unknown_headers = sorted({
+            label for label, _ in occurrences
             if cls._normalize_subject_header(label) not in canonical_by_normalized
-        )
+        })
+        unknown_values = {}
+        for label, value in occurrences:
+            if cls._normalize_subject_header(label) not in canonical_by_normalized:
+                unknown_values.setdefault(label, []).append(value)
+        normalized_occurrences = {}
+        for label, value in occurrences:
+            normalized = cls._normalize_subject_header(label)
+            canonical = canonical_by_normalized.get(normalized)
+            if canonical:
+                normalized_occurrences.setdefault(canonical, []).append(value)
+        ambiguous = [
+            header for header, values in normalized_occurrences.items()
+            if header in cls.SUBJECT_CONTRACT_HEADERS and len(set(values)) > 1
+        ]
+        if ambiguous:
+            raise SubjectStructureError(
+                "Ambiguous duplicate required header(s): " + ", ".join(sorted(ambiguous))
+            )
         missing_headers = [
             header
             for header in cls.SUBJECT_CONTRACT_HEADERS
@@ -101,6 +128,9 @@ class Parser:
             "emptyHeaders": sorted(
                 header
                 for header, values in observed_values.items()
+                if all(value == "" for value in values)
+            ) + sorted(
+                header for header, values in unknown_values.items()
                 if all(value == "" for value in values)
             ),
             "unknownHeaders": unknown_headers,
@@ -115,12 +145,17 @@ class Parser:
         page_count = len(observations)
         all_known_headers = sorted(
             cls.SUBJECT_CONTRACT_HEADERS + cls.LEGACY_SOURCE_HEADERS
+            + cls.INFORMATIONAL_HEADERS
         )
         presence_counts = {header: 0 for header in all_known_headers}
         empty_counts = {header: 0 for header in all_known_headers}
         unknown_headers = set()
         for observation in observations:
             for header in observation["observedHeaders"]:
+                presence_counts[header] += 1
+            for header in observation["unknownHeaders"]:
+                presence_counts.setdefault(header, 0)
+                empty_counts.setdefault(header, 0)
                 presence_counts[header] += 1
             for header in observation["emptyHeaders"]:
                 empty_counts[header] += 1
@@ -135,7 +170,8 @@ class Parser:
                     empty_counts[header] / page_count if page_count else 0
                 ),
             }
-            for header, count in presence_counts.items()
+            for header in sorted(presence_counts)
+            for count in [presence_counts[header]]
         }
         missing_headers = [
             header
@@ -145,7 +181,8 @@ class Parser:
         return {
             "subjectPageCount": page_count,
             "observedHeaders": [
-                header for header, count in presence_counts.items() if count
+                header for header in sorted(presence_counts)
+                if presence_counts[header]
             ],
             "unknownHeaders": sorted(unknown_headers),
             "missingHeaders": missing_headers,
@@ -162,24 +199,16 @@ class Parser:
         raw, structure = cls.inspect_subject_page_structure(html, base_url)
         unknown_headers = structure["unknownHeaders"]
         missing_headers = structure["missingHeaders"]
-        if unknown_headers:
-            structure_detail = (
-                "Unknown subject header(s) "
-                f"{', '.join(repr(header) for header in unknown_headers)}"
-            )
-            if missing_headers:
-                structure_detail += (
-                    "; missing expected header(s) "
-                    f"{', '.join(repr(header) for header in missing_headers)}"
-                )
-            raise ValueError(
-                f"{structure_detail} in {base_url}"
-            )
         if missing_headers:
-            raise ValueError(
-                "Missing subject header(s) "
-                f"{', '.join(repr(header) for header in missing_headers)} "
-                f"in {base_url}"
+            detail = "Missing subject header(s) " + ", ".join(
+                repr(header) for header in missing_headers
+            )
+            if unknown_headers:
+                detail += "; unknown subject header(s) " + ", ".join(
+                    repr(header) for header in unknown_headers
+                )
+            raise SubjectStructureError(
+                f"{detail} in {base_url}"
             )
 
         def find_value(expected: str, alternates=None):

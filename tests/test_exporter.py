@@ -140,10 +140,51 @@ def test_exporter_writes_bound_structure_report(tmp_path: Path):
     assert structure["structure"] == structure_report()
 
 
+def test_exporter_rejects_unknown_header_without_presence_entry(tmp_path: Path):
+    report = structure_report()
+    report["unknownHeaders"] = ["追加項目"]
+    report["observedHeaders"] = sorted(
+        [*report["observedHeaders"], "追加項目"]
+    )
+    with pytest.raises(ValueError, match="header presence"):
+        Exporter(str(tmp_path)).export(
+            {"10000100": subject()},
+            source="https://example.test/",
+            subject_structure_report=report,
+        )
+
+
+def test_exporter_rejects_unknown_header_not_observed(tmp_path: Path):
+    report = structure_report()
+    report["unknownHeaders"] = ["追加項目"]
+    with pytest.raises(ValueError, match="observed headers"):
+        Exporter(str(tmp_path)).export(
+            {"10000100": subject()},
+            source="https://example.test/",
+            subject_structure_report=report,
+        )
+
+
 @pytest.mark.parametrize("mutate, message", [
     (lambda report: report.update({"subjectPageCount": 2}), "page count"),
-    (lambda report: report["unknownHeaders"].append("追加項目"), "drift"),
-    (lambda report: report["missingHeaders"].append("年度"), "drift"),
+    (
+        lambda report: (
+            report["unknownHeaders"].append("追加項目"),
+            report.update({
+                "observedHeaders": sorted(
+                    [*report["observedHeaders"], "追加項目"]
+                )
+            }),
+            report["headerPresence"].update({
+                "追加項目": {
+                    "presentCount": 1, "presenceRate": 1.0,
+                    "emptyCount": 0, "emptyRate": 0.0,
+                }
+            }),
+        ),
+        None,
+    ),
+    (lambda report: report["missingHeaders"].append("年度"), "missing headers"),
     (
         lambda report: report["headerPresence"]["年度"].update(
             {"presenceRate": 0.5}
@@ -164,15 +205,24 @@ def test_invalid_structure_report_preserves_previous_generation(
     invalid = structure_report()
     mutate(invalid)
 
-    with pytest.raises(ValueError, match=message):
+    if message is None:
         exporter.export(
             {"10000100": subject()},
             source="https://example.test/",
             departments=departments(),
             subject_structure_report=invalid,
         )
+    else:
+        with pytest.raises(ValueError, match=message):
+            exporter.export(
+                {"10000100": subject()},
+                source="https://example.test/",
+                departments=departments(),
+                subject_structure_report=invalid,
+            )
 
-    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
+    if message is not None:
+        assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
 
 
 @pytest.mark.parametrize("mutate, message", [

@@ -164,13 +164,19 @@ class Exporter:
                 raise ValueError(
                     f"subject structure {key} must be sorted unique strings"
                 )
-        if report["unknownHeaders"] or report["missingHeaders"]:
-            raise ValueError(
-                "subject structure report contains contract drift"
-            )
+        if report["missingHeaders"]:
+            raise ValueError("subject structure report contains missing headers")
+        if not set(report["unknownHeaders"]).issubset(report["observedHeaders"]):
+            raise ValueError("unknown headers must be observed headers")
         header_presence = report["headerPresence"]
         if not isinstance(header_presence, dict):
             raise ValueError("subject structure headerPresence must be an object")
+        if any(
+            header not in header_presence for header in report["unknownHeaders"]
+        ):
+            raise ValueError(
+                "subject structure unknown headers must have header presence"
+            )
         for header, presence in header_presence.items():
             if not isinstance(header, str) or not isinstance(presence, dict):
                 raise ValueError("invalid subject structure header presence")
@@ -197,6 +203,9 @@ class Exporter:
                 or empty_rate != empty_count / subject_count
             ):
                 raise ValueError("invalid subject structure presence value")
+        for header in report["unknownHeaders"]:
+            if header_presence[header]["presentCount"] <= 0:
+                raise ValueError("unknown header must have positive presence")
 
     @staticmethod
     def _validate(data: dict, source: str) -> None:
