@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 """Refuse a consumer update that changes anything outside its data binding."""
 
+from __future__ import annotations
+
 import argparse
+import re
 import subprocess
 from pathlib import Path
 
 
-def allowed_paths(data_file: str) -> set[str]:
+def allowed_paths(
+    data_file: str,
+    history_paths: tuple[str, ...] = (),
+) -> set[str]:
     if not data_file or Path(data_file).name != data_file:
         raise ValueError("data file must be a non-empty basename")
-    return {
+    allowed = {
         f"data/{data_file}",
         "data/subjectDataManifest.json",
         "data/department_constants.json",
@@ -19,16 +25,46 @@ def allowed_paths(data_file: str) -> set[str]:
         "src/subject/activeSubjectData.ts",
         "src/types/rawSubjectProperties.ts",
     }
+    for history_path in history_paths:
+        if not re.fullmatch(
+            r"data/history/\d{4}/(?:index|history_[A-Za-z0-9._-]+)\.json",
+            history_path,
+        ):
+            raise ValueError(f"unsafe history path: {history_path}")
+        allowed.add(history_path)
+    return allowed
+
+
+def obsolete_path(data_file: str, obsolete_data_file: str | None) -> str | None:
+    if obsolete_data_file is None:
+        return None
+    if (
+        Path(obsolete_data_file).name != obsolete_data_file
+        or not re.fullmatch(
+            r"subject_details_main_[A-Za-z0-9._-]+\.json",
+            obsolete_data_file,
+        )
+        or obsolete_data_file == data_file
+    ):
+        raise ValueError("obsolete data file must be a different safe generation")
+    return f"data/{obsolete_data_file}"
 
 
 def assert_allowed_changes(
-    changes: list[tuple[str, str]], data_file: str
+    changes: list[tuple[str, str]],
+    data_file: str,
+    history_paths: tuple[str, ...] = (),
+    obsolete_data_file: str | None = None,
 ) -> None:
-    allowed = allowed_paths(data_file)
+    allowed = allowed_paths(data_file, history_paths)
+    obsolete = obsolete_path(data_file, obsolete_data_file)
     unexpected = [
         f"{status} {path}"
         for status, path in changes
-        if status not in {"??", " M", " A", "A "} or path not in allowed
+        if not (
+            (path in allowed and status in {"??", " M", " A", "A "})
+            or (path == obsolete and status == " D")
+        )
     ]
     if unexpected:
         raise ValueError(
@@ -86,13 +122,20 @@ def parse_name_status(output: bytes) -> list[tuple[str, str]]:
 
 
 def assert_allowed_patch_changes(
-    changes: list[tuple[str, str]], data_file: str
+    changes: list[tuple[str, str]],
+    data_file: str,
+    history_paths: tuple[str, ...] = (),
+    obsolete_data_file: str | None = None,
 ) -> None:
-    allowed = allowed_paths(data_file)
+    allowed = allowed_paths(data_file, history_paths)
+    obsolete = obsolete_path(data_file, obsolete_data_file)
     unexpected = [
         f"{status} {path}"
         for status, path in changes
-        if status not in {"A", "M"} or path not in allowed
+        if not (
+            (path in allowed and status in {"A", "M"})
+            or (path == obsolete and status == "D")
+        )
     ]
     if unexpected:
         raise ValueError(
@@ -142,6 +185,8 @@ def main() -> None:
     parser.add_argument("--data-file", required=True)
     parser.add_argument("--base-ref")
     parser.add_argument("--head-ref")
+    parser.add_argument("--history-path", action="append", default=[])
+    parser.add_argument("--obsolete-data-file")
     args = parser.parse_args()
     if bool(args.base_ref) != bool(args.head_ref):
         raise ValueError("base-ref and head-ref must be provided together")
@@ -149,9 +194,16 @@ def main() -> None:
         assert_allowed_patch_changes(
             git_patch_changes(args.consumer, args.base_ref, args.head_ref),
             args.data_file,
+            tuple(args.history_path),
+            args.obsolete_data_file,
         )
     else:
-        assert_allowed_changes(git_changes(args.consumer), args.data_file)
+        assert_allowed_changes(
+            git_changes(args.consumer),
+            args.data_file,
+            tuple(args.history_path),
+            args.obsolete_data_file,
+        )
 
 
 if __name__ == "__main__":

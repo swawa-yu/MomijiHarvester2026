@@ -183,3 +183,40 @@ def test_consumer_branch_diff_rejects_deletions_and_renames():
     deleted = parse_name_status(b"D\tdata/subjectDataManifest.json\0")
     with pytest.raises(ValueError, match="D data/subjectDataManifest.json"):
         assert_allowed_patch_changes(deleted, data_file)
+
+
+def test_consumer_diff_allows_only_scoped_history_and_obsolete_data():
+    data_file = "subject_details_main_2026-08-06_deadbeef.json"
+    obsolete = "subject_details_main_2026-08-05_cafebabe.json"
+    history_paths = (
+        "data/history/2026/index.json",
+        "data/history/2026/history_2026-08-05_2026-08-06_deadbeef.json",
+    )
+    assert_allowed_changes(
+        [
+            ("??", history_paths[0]),
+            ("??", history_paths[1]),
+            (" D", f"data/{obsolete}"),
+        ],
+        data_file,
+        history_paths,
+        obsolete,
+    )
+    assert_allowed_patch_changes(
+        [
+            ("A", history_paths[0]),
+            ("A", history_paths[1]),
+            ("D", f"data/{obsolete}"),
+        ],
+        data_file,
+        history_paths,
+        obsolete,
+    )
+    with pytest.raises(ValueError, match="unsafe history path"):
+        assert_allowed_changes(
+            [("??", "data/history/../../README.md")],
+            data_file,
+            ("data/history/../../README.md",),
+        )
+    with pytest.raises(ValueError, match="different safe generation"):
+        assert_allowed_changes([], data_file, (), data_file)
