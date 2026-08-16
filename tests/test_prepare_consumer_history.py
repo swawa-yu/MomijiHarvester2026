@@ -1,3 +1,4 @@
+import hashlib
 import json
 from copy import deepcopy
 from pathlib import Path
@@ -15,9 +16,10 @@ def write_classification_artifact(
     base_manifest: dict,
     target: dict,
     target_manifest: dict,
+    schema_version: int = 1,
 ) -> Path:
     artifact = {
-        "schemaVersion": 1,
+        "schemaVersion": schema_version,
         "comparisonType": (
             "same-academic-year"
             if base_manifest["academicYear"] == target_manifest["academicYear"]
@@ -158,6 +160,99 @@ def test_initialization_keeps_same_year_legacy_regression_fixture(tmp_path: Path
         "history index",
     )
     assert len(index["classificationArtifacts"]) == 1
+
+
+def test_same_year_accepts_schema_version_2_and_records_pointer_sha(tmp_path: Path):
+    consumer_data = tmp_path / "consumer" / "data"
+    consumer_data.mkdir(parents=True)
+    incoming = tmp_path / "incoming"
+    base, target = snapshots()
+    base_manifest = write_generation(incoming, base, "2026-04-01")
+    prepare_history_update(consumer_data, base_manifest)
+    install_generation(consumer_data, base_manifest)
+    target_manifest = write_generation(incoming, target, "2026-04-02")
+    classification = write_classification_artifact(
+        tmp_path / "classification.json",
+        base,
+        json.loads(base_manifest.read_text(encoding="utf-8")),
+        target,
+        json.loads(target_manifest.read_text(encoding="utf-8")),
+        schema_version=2,
+    )
+
+    result = prepare_history_update(consumer_data, target_manifest, classification)
+
+    pointer = read_json(
+        consumer_data / "history" / "2026" / "index.json", "index"
+    )["classificationArtifacts"][0]
+    assert result["classificationRelativePath"].endswith(pointer["dataFile"])
+    assert pointer["sha256"] == hashlib.sha256(classification.read_bytes()).hexdigest()
+
+
+def test_year_rollover_accepts_schema_version_2(tmp_path: Path):
+    consumer_data, _, base, active_manifest, next_data, next_manifest = (
+        rollover_fixture(tmp_path)
+    )
+    classification = write_classification_artifact(
+        tmp_path / "classification.json",
+        base,
+        json.loads(active_manifest.read_text(encoding="utf-8")),
+        next_data,
+        json.loads(next_manifest.read_text(encoding="utf-8")),
+        schema_version=2,
+    )
+
+    result = prepare_history_update(
+        consumer_data,
+        next_manifest,
+        classification,
+        update_kind="year-rollover",
+    )
+
+    index = read_json(consumer_data / "history" / "2027" / "index.json", "index")
+    pointer = index["classificationArtifacts"][0]
+    assert result["classificationRelativePath"].endswith(pointer["dataFile"])
+    assert pointer["sha256"] == hashlib.sha256(classification.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("schema_version", [None, 0, 3, True, "2"])
+def test_unsupported_classification_schema_version_fails_before_writes(
+    tmp_path: Path, schema_version: object
+):
+    consumer_data = tmp_path / "consumer" / "data"
+    consumer_data.mkdir(parents=True)
+    incoming = tmp_path / "incoming"
+    base, target = snapshots()
+    base_manifest = write_generation(incoming, base, "2026-04-01")
+    prepare_history_update(consumer_data, base_manifest)
+    install_generation(consumer_data, base_manifest)
+    target_manifest = write_generation(incoming, target, "2026-04-02")
+    classification = write_classification_artifact(
+        tmp_path / "classification.json",
+        base,
+        json.loads(base_manifest.read_text(encoding="utf-8")),
+        target,
+        json.loads(target_manifest.read_text(encoding="utf-8")),
+    )
+    artifact = json.loads(classification.read_text(encoding="utf-8"))
+    if schema_version is None:
+        del artifact["schemaVersion"]
+    else:
+        artifact["schemaVersion"] = schema_version
+    classification.write_text(json.dumps(artifact), encoding="utf-8")
+    before = {
+        path.relative_to(consumer_data): path.read_bytes()
+        for path in consumer_data.rglob("*") if path.is_file()
+    }
+
+    with pytest.raises(ValueError, match="schemaVersion"):
+        prepare_history_update(consumer_data, target_manifest, classification)
+
+    after = {
+        path.relative_to(consumer_data): path.read_bytes()
+        for path in consumer_data.rglob("*") if path.is_file()
+    }
+    assert after == before
 
 
 def test_rejects_tampered_chain_and_cross_year_update(tmp_path: Path):

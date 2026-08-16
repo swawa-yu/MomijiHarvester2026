@@ -191,8 +191,14 @@ def _prepare_classification_artifact(
     expected_keys = {"schemaVersion", "comparisonType", "base", "target", "fields"}
     if not isinstance(artifact, dict) or set(artifact) != expected_keys:
         raise ValueError("classification artifact has an invalid contract")
-    if artifact["schemaVersion"] != 1 or not isinstance(artifact["fields"], dict):
-        raise ValueError("classification artifact schemaVersion must be 1")
+    schema_version = artifact["schemaVersion"]
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version not in {1, 2}
+        or not isinstance(artifact["fields"], dict)
+    ):
+        raise ValueError("classification artifact schemaVersion must be 1 or 2")
     if baseline_data is None or not isinstance(baseline_manifest, dict):
         raise ValueError("classification artifact requires a consumer baseline")
     validation_manifest = baseline_manifest
