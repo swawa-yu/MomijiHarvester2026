@@ -197,7 +197,14 @@ class MomijiCrawler:
 
             subject_sources = {}
             failures = []
-            with tqdm(total=len(unique_subjects), desc="Parsing subjects", unit="lecture", dynamic_ncols=True, miniters=1, file=sys.stdout) as bar:
+            with tqdm(
+                total=len(unique_subjects),
+                desc="Parsing subjects",
+                unit="lecture",
+                dynamic_ncols=True,
+                miniters=1,
+                file=sys.stdout,
+            ) as bar:
                 for processed, (subject_url, faculty_name) in enumerate(
                         unique_subjects, start=1):
                     bar.set_description(f"Parsing {faculty_name}")

@@ -1,6 +1,5 @@
 import asyncio
 import json
-import sys
 from pathlib import Path
 
 import typer

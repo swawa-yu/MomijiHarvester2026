@@ -21,4 +21,3 @@ class SubjectDetails(BaseModel):
     enrolment_notes: str = Field("", alias="履修上の注意 受講条件等")
     message: str = Field("", alias="メッセージ")
     other: str = Field("", alias="その他")
-
