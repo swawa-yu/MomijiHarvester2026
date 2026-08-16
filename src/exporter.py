@@ -166,6 +166,8 @@ class Exporter:
                 )
         if report["missingHeaders"]:
             raise ValueError("subject structure report contains missing headers")
+        if not set(report["unknownHeaders"]).issubset(report["observedHeaders"]):
+            raise ValueError("unknown headers must be observed headers")
         header_presence = report["headerPresence"]
         if not isinstance(header_presence, dict):
             raise ValueError("subject structure headerPresence must be an object")
@@ -201,6 +203,9 @@ class Exporter:
                 or empty_rate != empty_count / subject_count
             ):
                 raise ValueError("invalid subject structure presence value")
+        for header in report["unknownHeaders"]:
+            if header_presence[header]["presentCount"] <= 0:
+                raise ValueError("unknown header must have positive presence")
 
     @staticmethod
     def _validate(data: dict, source: str) -> None:

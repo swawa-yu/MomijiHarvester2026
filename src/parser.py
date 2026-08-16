@@ -181,7 +181,8 @@ class Parser:
         return {
             "subjectPageCount": page_count,
             "observedHeaders": [
-                header for header, count in presence_counts.items() if count
+                header for header in sorted(presence_counts)
+                if presence_counts[header]
             ],
             "unknownHeaders": sorted(unknown_headers),
             "missingHeaders": missing_headers,

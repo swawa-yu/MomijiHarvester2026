@@ -166,11 +166,31 @@ def resolve_artifacts(output_dir: Path) -> dict[str, str | int]:
         != subject_count
     ):
         raise ValueError("structure report does not match manifest generation")
-    if (
-        structure_envelope["structure"].get("unknownHeaders") != []
-        or structure_envelope["structure"].get("missingHeaders") != []
-    ):
-        raise ValueError("structure report contains contract drift")
+    structure = structure_envelope["structure"]
+    if structure.get("missingHeaders") != []:
+        raise ValueError("structure report contains missing headers")
+    unknown_headers = structure.get("unknownHeaders", [])
+    if unknown_headers:
+        observed_headers = structure.get("observedHeaders")
+        header_presence = structure.get("headerPresence")
+        if (
+            not isinstance(observed_headers, list)
+            or not isinstance(header_presence, dict)
+            or not set(unknown_headers).issubset(observed_headers)
+            or any(header not in header_presence for header in unknown_headers)
+        ):
+            raise ValueError("structure report has inconsistent unknown headers")
+        for header in unknown_headers:
+            presence = header_presence[header]
+            if (
+                not isinstance(presence, dict)
+                or presence.get("presentCount", 0) <= 0
+                or presence.get("presenceRate")
+                != presence["presentCount"] / subject_count
+                or presence.get("emptyRate")
+                != presence.get("emptyCount", -1) / subject_count
+            ):
+                raise ValueError("structure report has invalid unknown header presence")
 
     return {
         "manifest_path": str(manifest_path),
