@@ -191,11 +191,13 @@ def test_consumer_diff_allows_only_scoped_history_and_obsolete_data():
     history_paths = (
         "data/history/2026/index.json",
         "data/history/2026/history_2026-08-05_2026-08-06_deadbeef.json",
+        "data/history/2026/classification_2026-08-05_2026-08-06_cafebabe.json",
     )
     assert_allowed_changes(
         [
             ("??", history_paths[0]),
             ("??", history_paths[1]),
+            ("??", history_paths[2]),
             (" D", f"data/{obsolete}"),
         ],
         data_file,
@@ -206,6 +208,7 @@ def test_consumer_diff_allows_only_scoped_history_and_obsolete_data():
         [
             ("A", history_paths[0]),
             ("A", history_paths[1]),
+            ("A", history_paths[2]),
             ("D", f"data/{obsolete}"),
         ],
         data_file,

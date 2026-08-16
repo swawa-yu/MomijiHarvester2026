@@ -9,6 +9,38 @@ from scripts.subject_history import canonical_sha256, read_json, verify_chain
 from tests.test_subject_history import manifest, snapshots
 
 
+def write_classification_artifact(
+    path: Path,
+    base: dict,
+    base_manifest: dict,
+    target: dict,
+    target_manifest: dict,
+) -> Path:
+    artifact = {
+        "schemaVersion": 1,
+        "comparisonType": (
+            "same-academic-year"
+            if base_manifest["academicYear"] == target_manifest["academicYear"]
+            else "academic-year-rollover"
+        ),
+        "base": {
+            "academicYear": base_manifest["academicYear"],
+            "retrievedAt": base_manifest["retrievedAt"],
+            "subjectCount": len(base),
+            "canonicalSha256": canonical_sha256(base),
+        },
+        "target": {
+            "academicYear": target_manifest["academicYear"],
+            "retrievedAt": target_manifest["retrievedAt"],
+            "subjectCount": len(target),
+            "canonicalSha256": canonical_sha256(target),
+        },
+        "fields": {},
+    }
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+    return path
+
+
 def write_generation(directory: Path, data: dict, date: str) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     academic_year = next(iter(data.values()))["年度"]
@@ -101,11 +133,31 @@ def test_initialization_keeps_same_year_legacy_regression_fixture(tmp_path: Path
         json.dumps(legacy_manifest), encoding="utf-8"
     )
     incoming_manifest = write_generation(incoming, target, "2026-04-02")
+    incoming_metadata = json.loads(incoming_manifest.read_text(encoding="utf-8"))
+    classification = write_classification_artifact(
+        tmp_path / "classification.json",
+        base,
+        legacy_manifest,
+        target,
+        incoming_metadata,
+    )
 
-    result = prepare_history_update(consumer_data, incoming_manifest)
+    result = prepare_history_update(
+        consumer_data,
+        incoming_manifest,
+        classification,
+    )
 
     assert result["mode"] == "initialize"
     assert result["obsoleteDataFile"] is None
+    assert result["classificationRelativePath"].startswith(
+        "data/history/2026/classification_"
+    )
+    index = read_json(
+        consumer_data / "history" / "2026" / "index.json",
+        "history index",
+    )
+    assert len(index["classificationArtifacts"]) == 1
 
 
 def test_rejects_tampered_chain_and_cross_year_update(tmp_path: Path):
