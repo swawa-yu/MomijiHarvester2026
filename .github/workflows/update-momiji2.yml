@@ -163,6 +163,18 @@ jobs:
           console.log(JSON.stringify(result.guardReport, null, 2));
           NODE
 
+      - name: Generate the non-blocking classification analysis
+        if: inputs.mode == 'full' && steps.current.outputs.already_current != 'true'
+        id: classification
+        working-directory: ${{ runner.temp }}/momiji2
+        env:
+          INCOMING_MANIFEST: ${{ steps.crawl.outputs.manifest_path }}
+        run: |
+          artifact="$RUNNER_TEMP/classification-diff.json"
+          node scripts/classification-diff.mjs \
+            data/subjectDataManifest.json "$INCOMING_MANIFEST" > "$artifact"
+          echo "artifact_path=$artifact" >> "$GITHUB_OUTPUT"
+
       - name: Prepare the verified same-year history update
         if: inputs.mode == 'full' && steps.current.outputs.already_current != 'true'
         id: history
@@ -170,6 +182,7 @@ jobs:
           python scripts/prepare_consumer_history.py \
             --consumer-data-dir "$RUNNER_TEMP/momiji2/data" \
             --incoming-manifest "${{ steps.crawl.outputs.manifest_path }}" \
+            --classification-artifact "${{ steps.classification.outputs.artifact_path }}" \
             --github-output "$GITHUB_OUTPUT"
 
       - name: Import, generate, and verify the consumer update
@@ -181,6 +194,7 @@ jobs:
           DATA_FILE: ${{ steps.crawl.outputs.data_file }}
           HISTORY_INDEX: ${{ steps.history.outputs.indexRelativePath }}
           HISTORY_ARTIFACT: ${{ steps.history.outputs.artifactRelativePath }}
+          CLASSIFICATION_ARTIFACT: ${{ steps.history.outputs.classificationRelativePath }}
           OBSOLETE_DATA_FILE: ${{ steps.history.outputs.obsoleteDataFile }}
         run: |
           pnpm import:harvester-generation --manifest "$MANIFEST_PATH" --departments "$DEPARTMENTS_PATH"
@@ -202,6 +216,10 @@ jobs:
           if test -n "$HISTORY_ARTIFACT"; then
             history_args+=(--history-path "$HISTORY_ARTIFACT")
             paths+=("$HISTORY_ARTIFACT")
+          fi
+          if test -n "$CLASSIFICATION_ARTIFACT"; then
+            history_args+=(--history-path "$CLASSIFICATION_ARTIFACT")
+            paths+=("$CLASSIFICATION_ARTIFACT")
           fi
           if test -n "$OBSOLETE_DATA_FILE"; then
             history_args+=(--obsolete-data-file "$OBSOLETE_DATA_FILE")
@@ -227,6 +245,7 @@ jobs:
           MANIFEST_PATH: ${{ steps.crawl.outputs.manifest_path }}
           HISTORY_INDEX: ${{ steps.history.outputs.indexRelativePath }}
           HISTORY_ARTIFACT: ${{ steps.history.outputs.artifactRelativePath }}
+          CLASSIFICATION_ARTIFACT: ${{ steps.history.outputs.classificationRelativePath }}
           OBSOLETE_DATA_FILE: ${{ steps.history.outputs.obsoleteDataFile }}
         run: |
           git fetch origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
@@ -256,6 +275,11 @@ jobs:
             git show "origin/$BRANCH:$HISTORY_ARTIFACT" > "$RUNNER_TEMP/existing-history-artifact.json"
             cmp "$HISTORY_ARTIFACT" "$RUNNER_TEMP/existing-history-artifact.json"
             history_args+=(--history-path "$HISTORY_ARTIFACT")
+          fi
+          if test -n "$CLASSIFICATION_ARTIFACT"; then
+            git show "origin/$BRANCH:$CLASSIFICATION_ARTIFACT" > "$RUNNER_TEMP/existing-classification-artifact.json"
+            cmp "$CLASSIFICATION_ARTIFACT" "$RUNNER_TEMP/existing-classification-artifact.json"
+            history_args+=(--history-path "$CLASSIFICATION_ARTIFACT")
           fi
           if test -n "$OBSOLETE_DATA_FILE"; then
             history_args+=(--obsolete-data-file "$OBSOLETE_DATA_FILE")
@@ -325,6 +349,7 @@ jobs:
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
           HISTORY_INDEX: ${{ steps.history.outputs.indexRelativePath }}
           HISTORY_ARTIFACT: ${{ steps.history.outputs.artifactRelativePath }}
+          CLASSIFICATION_ARTIFACT: ${{ steps.history.outputs.classificationRelativePath }}
           OBSOLETE_DATA_FILE: ${{ steps.history.outputs.obsoleteDataFile }}
         run: |
           git switch -c "$BRANCH"
@@ -334,6 +359,9 @@ jobs:
           paths=("data/${{ steps.crawl.outputs.data_file }}" "$HISTORY_INDEX")
           if test -n "$HISTORY_ARTIFACT"; then
             paths+=("$HISTORY_ARTIFACT")
+          fi
+          if test -n "$CLASSIFICATION_ARTIFACT"; then
+            paths+=("$CLASSIFICATION_ARTIFACT")
           fi
           if test -n "$OBSOLETE_DATA_FILE"; then
             paths+=("data/$OBSOLETE_DATA_FILE")

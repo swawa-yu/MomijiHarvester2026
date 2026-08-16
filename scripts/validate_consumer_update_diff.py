@@ -27,7 +27,7 @@ def allowed_paths(
     }
     for history_path in history_paths:
         if not re.fullmatch(
-            r"data/history/\d{4}/(?:index|history_[A-Za-z0-9._-]+)\.json",
+            r"data/history/\d{4}/(?:index|history_[A-Za-z0-9._-]+|classification_[A-Za-z0-9._-]+)\.json",
             history_path,
         ):
             raise ValueError(f"unsafe history path: {history_path}")

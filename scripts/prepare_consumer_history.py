@@ -23,6 +23,7 @@ from scripts.subject_history import (
 INDEX_SCHEMA_VERSION = 1
 INDEX_KEYS = {
     "schemaVersion", "academicYear", "baseline", "latest", "artifacts",
+    "classificationArtifacts",
 }
 INDEX_SNAPSHOT_KEYS = {
     "dataFile", "retrievedAt", "subjectCount", "canonicalSha256",
@@ -92,6 +93,27 @@ def validate_index(value: object, academic_year: str) -> dict:
         raise ValueError("history index contains duplicate artifacts")
     if not artifacts and value["baseline"] != value["latest"]:
         raise ValueError("empty history index must have baseline as latest")
+    classification_artifacts = value["classificationArtifacts"]
+    if not isinstance(classification_artifacts, list):
+        raise ValueError("history index classificationArtifacts must be a list")
+    classification_filenames = []
+    for pointer in classification_artifacts:
+        if not isinstance(pointer, dict) or set(pointer) != ARTIFACT_POINTER_KEYS:
+            raise ValueError("classification artifact pointer is invalid")
+        filename = pointer["dataFile"]
+        sha256 = pointer["sha256"]
+        if (
+            not isinstance(filename, str)
+            or not re.fullmatch(
+                r"classification_[A-Za-z0-9._-]+\.json", filename
+            )
+            or not isinstance(sha256, str)
+            or not re.fullmatch(r"[a-f0-9]{64}", sha256)
+        ):
+            raise ValueError("classification artifact pointer is invalid")
+        classification_filenames.append(filename)
+    if len(classification_filenames) != len(set(classification_filenames)):
+        raise ValueError("history index contains duplicate classification artifacts")
     return value
 
 
@@ -144,12 +166,84 @@ def _load_verified_chain(
         reconstructed = baseline
     if canonical_sha256(reconstructed) != index["latest"]["canonicalSha256"]:
         raise ValueError("history chain result does not match index latest")
+    for pointer in index["classificationArtifacts"]:
+        payload = (history_dir / pointer["dataFile"]).read_bytes()
+        if hashlib.sha256(payload).hexdigest() != pointer["sha256"]:
+            raise ValueError(
+                "classification artifact file SHA-256 does not match index"
+            )
     return reconstructed, artifacts
+
+
+def _prepare_classification_artifact(
+    artifact_path: Path | None,
+    history_dir: Path,
+    baseline_data: object | None,
+    baseline_manifest: object | None,
+    incoming_data: dict,
+    incoming_manifest: dict,
+) -> tuple[dict | None, Path | None]:
+    if artifact_path is None:
+        return None, None
+    artifact_path = artifact_path.resolve(strict=True)
+    payload = artifact_path.read_bytes()
+    artifact = read_json(artifact_path, "classification artifact")
+    expected_keys = {"schemaVersion", "comparisonType", "base", "target", "fields"}
+    if not isinstance(artifact, dict) or set(artifact) != expected_keys:
+        raise ValueError("classification artifact has an invalid contract")
+    if artifact["schemaVersion"] != 1 or not isinstance(artifact["fields"], dict):
+        raise ValueError("classification artifact schemaVersion must be 1")
+    if baseline_data is None or not isinstance(baseline_manifest, dict):
+        raise ValueError("classification artifact requires a consumer baseline")
+    validation_manifest = baseline_manifest
+    if baseline_manifest.get("schemaVersion") is None:
+        validation_manifest = {
+            **baseline_manifest,
+            "schemaVersion": 1,
+            "structureReport": {
+                "dataFile": "subject_structure_legacy.json",
+                "sha256": "0" * 64,
+            },
+        }
+    base_metadata = validate_snapshot(baseline_data, validation_manifest)
+    target_metadata = validate_snapshot(incoming_data, incoming_manifest)
+    expected_type = (
+        "same-academic-year"
+        if base_metadata["academicYear"] == target_metadata["academicYear"]
+        else "academic-year-rollover"
+    )
+    for label, observed, expected in (
+        ("base", artifact["base"], base_metadata),
+        ("target", artifact["target"], target_metadata),
+    ):
+        if not isinstance(observed, dict) or any(
+            observed.get(field) != expected[field]
+            for field in (
+                "academicYear", "retrievedAt", "subjectCount",
+                "canonicalSha256",
+            )
+        ):
+            raise ValueError(
+                f"classification artifact {label} does not match generation"
+            )
+    if artifact["comparisonType"] != expected_type:
+        raise ValueError("classification artifact comparisonType is invalid")
+    digest = hashlib.sha256(payload).hexdigest()
+    filename = (
+        f"classification_{base_metadata['retrievedAt']}_"
+        f"{target_metadata['retrievedAt']}_{digest[:12]}.json"
+    )
+    destination = history_dir / filename
+    if destination.exists() and destination.read_bytes() != payload:
+        raise ValueError("classification artifact filename collision")
+    _atomic_write(destination, payload)
+    return {"dataFile": filename, "sha256": digest}, destination
 
 
 def prepare_history_update(
     consumer_data_dir: Path,
     incoming_manifest_path: Path,
+    classification_artifact_path: Path | None = None,
 ) -> dict[str, object]:
     consumer_data_dir = consumer_data_dir.resolve(strict=True)
     incoming_manifest_path = incoming_manifest_path.resolve(strict=True)
@@ -172,6 +266,8 @@ def prepare_history_update(
 
     if not index_path.exists():
         current_manifest_path = consumer_data_dir / "subjectDataManifest.json"
+        current_manifest = None
+        current_data = None
         if current_manifest_path.exists():
             current_manifest = read_json(current_manifest_path, "current manifest")
             if (
@@ -181,12 +277,29 @@ def prepare_history_update(
                 raise ValueError(
                     "academicYear rollover must be handled before history initialization"
                 )
+            current_data = read_json(
+                consumer_data_dir / current_manifest.get("dataFile", ""),
+                "current data",
+            )
+        classification_pointer, classification_path = (
+            _prepare_classification_artifact(
+                classification_artifact_path,
+                history_dir,
+                current_data,
+                current_manifest,
+                incoming_data,
+                incoming_manifest,
+            )
+        )
         index = {
             "schemaVersion": INDEX_SCHEMA_VERSION,
             "academicYear": academic_year,
             "baseline": incoming_pointer,
             "latest": incoming_pointer,
             "artifacts": [],
+            "classificationArtifacts": (
+                [classification_pointer] if classification_pointer else []
+            ),
         }
         _atomic_write(index_path, _json_bytes(index))
         return {
@@ -195,6 +308,10 @@ def prepare_history_update(
             "indexRelativePath": f"data/history/{year}/index.json",
             "artifactPath": None,
             "artifactRelativePath": None,
+            "classificationRelativePath": (
+                f"data/history/{year}/{classification_path.name}"
+                if classification_path else None
+            ),
             "obsoleteDataFile": None,
         }
 
@@ -226,6 +343,16 @@ def prepare_history_update(
         incoming_data,
         incoming_manifest,
     )
+    classification_pointer, classification_path = (
+        _prepare_classification_artifact(
+            classification_artifact_path,
+            history_dir,
+            current_data,
+            current_manifest,
+            incoming_data,
+            incoming_manifest,
+        )
+    )
     artifact_payload = _json_bytes(artifact)
     artifact_sha256 = hashlib.sha256(artifact_payload).hexdigest()
     artifact_filename = (
@@ -256,6 +383,9 @@ def prepare_history_update(
             "dataFile": artifact_filename,
             "sha256": artifact_sha256,
         }],
+        "classificationArtifacts": index["classificationArtifacts"] + (
+            [classification_pointer] if classification_pointer else []
+        ),
     }
     _atomic_write(artifact_path, artifact_payload)
     _atomic_write(index_path, _json_bytes(updated_index))
@@ -270,6 +400,10 @@ def prepare_history_update(
         "artifactRelativePath": (
             f"data/history/{year}/{artifact_filename}"
         ),
+        "classificationRelativePath": (
+            f"data/history/{year}/{classification_path.name}"
+            if classification_path else None
+        ),
         "obsoleteDataFile": obsolete,
     }
 
@@ -278,11 +412,13 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--consumer-data-dir", required=True, type=Path)
     parser.add_argument("--incoming-manifest", required=True, type=Path)
+    parser.add_argument("--classification-artifact", type=Path)
     parser.add_argument("--github-output", type=Path)
     args = parser.parse_args()
     result = prepare_history_update(
         args.consumer_data_dir,
         args.incoming_manifest,
+        args.classification_artifact,
     )
     if args.github_output:
         with args.github_output.open("a", encoding="utf-8") as output:
