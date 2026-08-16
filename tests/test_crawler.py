@@ -455,6 +455,8 @@ async def test_transient_detail_http_failure_recovers_and_publishes(tmp_path: Pa
     assert crawler.subject_structure_report["headerPresence"]["年度"] == {
         "presentCount": 1,
         "presenceRate": 1,
+        "emptyCount": 0,
+        "emptyRate": 0,
     }
     assert (output_dir / "subjectDataManifest.json").exists()
 

@@ -51,7 +51,12 @@ def structure_report(subject_count=1):
         "unknownHeaders": [],
         "missingHeaders": [],
         "headerPresence": {
-            header: {"presentCount": subject_count, "presenceRate": 1.0}
+            header: {
+                "presentCount": subject_count,
+                "presenceRate": 1.0,
+                "emptyCount": 0,
+                "emptyRate": 0.0,
+            }
             for header in sorted(Parser.SUBJECT_CONTRACT_HEADERS)
         },
     }

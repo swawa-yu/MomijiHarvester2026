@@ -78,12 +78,13 @@ class Parser:
             cls._normalize_subject_header(header): header
             for header in known_headers
         }
-        observed_headers = {
-            canonical_by_normalized[normalized]
-            for label in raw
-            if (normalized := cls._normalize_subject_header(label))
-            in canonical_by_normalized
-        }
+        observed_values = {}
+        for label, value in raw.items():
+            normalized = cls._normalize_subject_header(label)
+            if normalized in canonical_by_normalized:
+                canonical = canonical_by_normalized[normalized]
+                observed_values.setdefault(canonical, []).append(value)
+        observed_headers = set(observed_values)
         unknown_headers = sorted(
             label
             for label in raw
@@ -97,6 +98,11 @@ class Parser:
         return raw, {
             "sourceUrl": source_url,
             "observedHeaders": sorted(observed_headers),
+            "emptyHeaders": sorted(
+                header
+                for header, values in observed_values.items()
+                if all(value == "" for value in values)
+            ),
             "unknownHeaders": unknown_headers,
             "missingHeaders": missing_headers,
         }
@@ -111,16 +117,23 @@ class Parser:
             cls.SUBJECT_CONTRACT_HEADERS + cls.LEGACY_SOURCE_HEADERS
         )
         presence_counts = {header: 0 for header in all_known_headers}
+        empty_counts = {header: 0 for header in all_known_headers}
         unknown_headers = set()
         for observation in observations:
             for header in observation["observedHeaders"]:
                 presence_counts[header] += 1
+            for header in observation["emptyHeaders"]:
+                empty_counts[header] += 1
             unknown_headers.update(observation["unknownHeaders"])
 
         header_presence = {
             header: {
                 "presentCount": count,
                 "presenceRate": count / page_count if page_count else 0,
+                "emptyCount": empty_counts[header],
+                "emptyRate": (
+                    empty_counts[header] / page_count if page_count else 0
+                ),
             }
             for header, count in presence_counts.items()
         }

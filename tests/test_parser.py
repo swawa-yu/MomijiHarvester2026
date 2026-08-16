@@ -74,7 +74,7 @@ def test_inspect_subject_structure_detects_added_removed_and_renamed_headers():
     assert "使用言語" in str(error.value)
 
 
-def test_summarize_subject_structure_reports_presence_counts_and_rates():
+def test_summarize_subject_structure_reports_presence_and_empty_rates():
     _, complete = Parser.inspect_subject_page_structure(
         subject_page(),
         "complete.html",
@@ -91,11 +91,33 @@ def test_summarize_subject_structure_reports_presence_counts_and_rates():
     assert report["headerPresence"]["年度"] == {
         "presentCount": 2,
         "presenceRate": 1,
+        "emptyCount": 0,
+        "emptyRate": 0,
     }
     assert report["headerPresence"]["メッセージ"] == {
         "presentCount": 1,
         "presenceRate": 0.5,
+        "emptyCount": 1,
+        "emptyRate": 0.5,
     }
+
+
+def test_subject_structure_is_independent_of_row_order():
+    html = subject_page()
+    body = html.removeprefix("<table>").removesuffix("</table>")
+    rows = [row + "</tr>" for row in body.split("</tr>") if row]
+    reordered_html = f"<table>{''.join(reversed(rows))}</table>"
+
+    _, original = Parser.inspect_subject_page_structure(html, "original.html")
+    _, reordered = Parser.inspect_subject_page_structure(
+        reordered_html,
+        "reordered.html",
+    )
+
+    assert reordered["observedHeaders"] == original["observedHeaders"]
+    assert reordered["emptyHeaders"] == original["emptyHeaders"]
+    assert reordered["unknownHeaders"] == []
+    assert reordered["missingHeaders"] == []
 
 
 def test_parse_subject_page_rejects_missing_header_with_source_url():
