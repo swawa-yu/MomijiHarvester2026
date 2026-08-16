@@ -281,6 +281,7 @@ class MomijiCrawler:
                 result,
                 source=self.config.base_url,
                 departments=departments,
+                subject_structure_report=self.subject_structure_report,
             )
             print(f"Exported {len(result)} subjects to {output_path}")
         finally:

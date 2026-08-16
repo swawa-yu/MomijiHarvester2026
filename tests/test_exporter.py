@@ -8,6 +8,7 @@ import pytest
 
 from src.exporter import Exporter
 from src.models import SubjectDetails
+from src.parser import Parser
 
 FIELDS = {
     # Independent copy of momiji2's RawSubject contract (19 aliases).
@@ -40,6 +41,19 @@ def departments():
     return {
         "kaikouBukyokuGakubus": ["教養教育"],
         "kaikouBukyokuDaigakuins": ["大学院共通教育（博士課程前期）"],
+    }
+
+
+def structure_report(subject_count=1):
+    return {
+        "subjectPageCount": subject_count,
+        "observedHeaders": sorted(Parser.SUBJECT_CONTRACT_HEADERS),
+        "unknownHeaders": [],
+        "missingHeaders": [],
+        "headerPresence": {
+            header: {"presentCount": subject_count, "presenceRate": 1.0}
+            for header in sorted(Parser.SUBJECT_CONTRACT_HEADERS)
+        },
     }
 
 
@@ -95,6 +109,65 @@ def test_exporter_writes_department_contract_for_exact_subject_generation(
     assert artifact_paths[0].stem.endswith(
         f"_{hashlib.sha256(artifact_paths[0].read_bytes()).hexdigest()[:12]}"
     )
+
+
+def test_exporter_writes_bound_structure_report(tmp_path: Path):
+    path = Exporter(str(tmp_path)).export(
+        {"10000100": subject()},
+        source="https://example.test/syllabus/",
+        departments=departments(),
+        subject_structure_report=structure_report(),
+    )
+    manifest = read(tmp_path / "subjectDataManifest.json")
+    structure_path = tmp_path / manifest["structureReport"]["dataFile"]
+    structure = read(structure_path)
+
+    assert manifest["schemaVersion"] == 1
+    assert hashlib.sha256(structure_path.read_bytes()).hexdigest() == (
+        manifest["structureReport"]["sha256"]
+    )
+    assert structure["schemaVersion"] == 1
+    assert structure["subjectData"] == {
+        "dataFile": Path(path).name,
+        "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
+        "subjectCount": 1,
+    }
+    assert structure["structure"] == structure_report()
+
+
+@pytest.mark.parametrize("mutate, message", [
+    (lambda report: report.update({"subjectPageCount": 2}), "page count"),
+    (lambda report: report["unknownHeaders"].append("追加項目"), "drift"),
+    (lambda report: report["missingHeaders"].append("年度"), "drift"),
+    (
+        lambda report: report["headerPresence"]["年度"].update(
+            {"presenceRate": 0.5}
+        ),
+        "presence value",
+    ),
+])
+def test_invalid_structure_report_preserves_previous_generation(
+        tmp_path: Path, mutate, message):
+    exporter = Exporter(str(tmp_path))
+    exporter.export(
+        {"10000100": subject()},
+        source="https://example.test/",
+        departments=departments(),
+        subject_structure_report=structure_report(),
+    )
+    before = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+    invalid = structure_report()
+    mutate(invalid)
+
+    with pytest.raises(ValueError, match=message):
+        exporter.export(
+            {"10000100": subject()},
+            source="https://example.test/",
+            departments=departments(),
+            subject_structure_report=invalid,
+        )
+
+    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
 
 
 @pytest.mark.parametrize("mutate, message", [

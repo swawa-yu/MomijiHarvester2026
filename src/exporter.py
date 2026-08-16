@@ -22,6 +22,7 @@ class Exporter:
         lang_tag: str = "",
         source: str = "https://momiji.hiroshima-u.ac.jp/syllabusHtml/",
         departments: Optional[Dict[str, List[str]]] = None,
+        subject_structure_report: Optional[dict[str, object]] = None,
     ) -> str:
         """Write a subject generation and, when supplied, its department contract.
 
@@ -89,16 +90,103 @@ class Exporter:
                 f"{department_digest[:12]}.json",
             )
 
+        structure_content = None
+        structure_path = None
+        if subject_structure_report is not None:
+            self._validate_subject_structure_report(
+                subject_structure_report,
+                manifest["subjectCount"],
+            )
+            structure_artifact = {
+                "schemaVersion": 1,
+                "academicYear": manifest["academicYear"],
+                "retrievedAt": manifest["retrievedAt"],
+                "source": manifest["source"],
+                "subjectData": {
+                    "dataFile": manifest["dataFile"],
+                    "sha256": full_digest,
+                    "subjectCount": manifest["subjectCount"],
+                },
+                "structure": subject_structure_report,
+            }
+            structure_content = json.dumps(
+                structure_artifact, ensure_ascii=False, indent=2
+            ).encode("utf-8")
+            structure_digest = hashlib.sha256(structure_content).hexdigest()
+            structure_path = os.path.join(
+                self.output_dir,
+                f"subject_structure_{Path(output_path).stem}_"
+                f"{structure_digest[:12]}.json",
+            )
+            manifest["schemaVersion"] = 1
+            manifest["structureReport"] = {
+                "dataFile": Path(structure_path).name,
+                "sha256": structure_digest,
+            }
+
         # The manifest is the pointer to a publishable generation, so write it
-        # only after both immutable generation files are in place.
+        # only after every immutable generation file is in place.
         self._atomic_write(output_path, content)
         if department_path is not None and department_content is not None:
             self._atomic_write(department_path, department_content)
+        if structure_path is not None and structure_content is not None:
+            self._atomic_write(structure_path, structure_content)
         self._atomic_write(
             os.path.join(self.output_dir, "subjectDataManifest.json"),
             json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"),
         )
         return output_path
+
+    @staticmethod
+    def _validate_subject_structure_report(
+        report: object,
+        subject_count: int,
+    ) -> None:
+        expected_keys = {
+            "subjectPageCount", "observedHeaders", "unknownHeaders",
+            "missingHeaders", "headerPresence",
+        }
+        if not isinstance(report, dict) or set(report) != expected_keys:
+            raise ValueError(
+                "subject structure report does not match the version 1 contract"
+            )
+        if report["subjectPageCount"] != subject_count:
+            raise ValueError(
+                "subject structure page count does not match subject count"
+            )
+        for key in ("observedHeaders", "unknownHeaders", "missingHeaders"):
+            values = report[key]
+            if (
+                not isinstance(values, list)
+                or any(not isinstance(value, str) for value in values)
+                or values != sorted(set(values))
+            ):
+                raise ValueError(
+                    f"subject structure {key} must be sorted unique strings"
+                )
+        if report["unknownHeaders"] or report["missingHeaders"]:
+            raise ValueError(
+                "subject structure report contains contract drift"
+            )
+        header_presence = report["headerPresence"]
+        if not isinstance(header_presence, dict):
+            raise ValueError("subject structure headerPresence must be an object")
+        for header, presence in header_presence.items():
+            if not isinstance(header, str) or not isinstance(presence, dict):
+                raise ValueError("invalid subject structure header presence")
+            if set(presence) != {"presentCount", "presenceRate"}:
+                raise ValueError("invalid subject structure presence fields")
+            count = presence["presentCount"]
+            rate = presence["presenceRate"]
+            if (
+                not isinstance(count, int)
+                or isinstance(count, bool)
+                or not 0 <= count <= subject_count
+                or not isinstance(rate, (int, float))
+                or isinstance(rate, bool)
+                or rate != count / subject_count
+            ):
+                raise ValueError("invalid subject structure presence value")
 
     @staticmethod
     def _validate(data: dict, source: str) -> None:
