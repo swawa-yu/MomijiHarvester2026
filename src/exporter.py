@@ -174,10 +174,14 @@ class Exporter:
         for header, presence in header_presence.items():
             if not isinstance(header, str) or not isinstance(presence, dict):
                 raise ValueError("invalid subject structure header presence")
-            if set(presence) != {"presentCount", "presenceRate"}:
+            if set(presence) != {
+                "presentCount", "presenceRate", "emptyCount", "emptyRate",
+            }:
                 raise ValueError("invalid subject structure presence fields")
             count = presence["presentCount"]
             rate = presence["presenceRate"]
+            empty_count = presence["emptyCount"]
+            empty_rate = presence["emptyRate"]
             if (
                 not isinstance(count, int)
                 or isinstance(count, bool)
@@ -185,6 +189,12 @@ class Exporter:
                 or not isinstance(rate, (int, float))
                 or isinstance(rate, bool)
                 or rate != count / subject_count
+                or not isinstance(empty_count, int)
+                or isinstance(empty_count, bool)
+                or not 0 <= empty_count <= count
+                or not isinstance(empty_rate, (int, float))
+                or isinstance(empty_rate, bool)
+                or empty_rate != empty_count / subject_count
             ):
                 raise ValueError("invalid subject structure presence value")
 
