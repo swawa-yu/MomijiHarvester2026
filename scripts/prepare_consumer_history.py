@@ -182,9 +182,9 @@ def _prepare_classification_artifact(
     baseline_manifest: object | None,
     incoming_data: dict,
     incoming_manifest: dict,
-) -> tuple[dict | None, Path | None]:
+) -> tuple[dict | None, Path | None, bytes | None]:
     if artifact_path is None:
-        return None, None
+        return None, None, None
     artifact_path = artifact_path.resolve(strict=True)
     payload = artifact_path.read_bytes()
     artifact = read_json(artifact_path, "classification artifact")
@@ -236,15 +236,17 @@ def _prepare_classification_artifact(
     destination = history_dir / filename
     if destination.exists() and destination.read_bytes() != payload:
         raise ValueError("classification artifact filename collision")
-    _atomic_write(destination, payload)
-    return {"dataFile": filename, "sha256": digest}, destination
+    return {"dataFile": filename, "sha256": digest}, destination, payload
 
 
 def prepare_history_update(
     consumer_data_dir: Path,
     incoming_manifest_path: Path,
     classification_artifact_path: Path | None = None,
+    update_kind: str = "same-year",
 ) -> dict[str, object]:
+    if update_kind not in {"same-year", "year-rollover"}:
+        raise ValueError("update_kind must be same-year or year-rollover")
     consumer_data_dir = consumer_data_dir.resolve(strict=True)
     incoming_manifest_path = incoming_manifest_path.resolve(strict=True)
     incoming_manifest = read_json(incoming_manifest_path, "incoming manifest")
@@ -264,24 +266,127 @@ def prepare_history_update(
         incoming_manifest["dataFile"], incoming_metadata
     )
 
+    if update_kind == "year-rollover" and index_path.exists():
+        raise ValueError("year-rollover destination history index already exists")
+
     if not index_path.exists():
         current_manifest_path = consumer_data_dir / "subjectDataManifest.json"
         current_manifest = None
         current_data = None
         if current_manifest_path.exists():
             current_manifest = read_json(current_manifest_path, "current manifest")
-            if (
-                not isinstance(current_manifest, dict)
-                or current_manifest.get("academicYear") != academic_year
-            ):
+            if not isinstance(current_manifest, dict):
+                raise ValueError("current manifest must be an object")
+            current_year = current_manifest.get("academicYear", "").removesuffix(
+                "年度"
+            )
+            if current_year != year:
+                if update_kind != "year-rollover":
+                    raise ValueError(
+                        "academicYear rollover must be handled before history initialization"
+                    )
+                try:
+                    valid_rollover = int(year) == int(current_year) + 1
+                except ValueError:
+                    valid_rollover = False
+                if not valid_rollover:
+                    raise ValueError(
+                        "year-rollover requires the immediately following academic year"
+                    )
+            elif update_kind == "year-rollover":
                 raise ValueError(
-                    "academicYear rollover must be handled before history initialization"
+                    "year-rollover requires a different academic year"
                 )
             current_data = read_json(
                 consumer_data_dir / current_manifest.get("dataFile", ""),
                 "current data",
             )
-        classification_pointer, classification_path = (
+            validation_manifest = current_manifest
+            if current_manifest.get("schemaVersion") is None:
+                validation_manifest = {
+                    **current_manifest,
+                    "schemaVersion": 1,
+                    "structureReport": {
+                        "dataFile": "subject_structure_legacy.json",
+                        "sha256": "0" * 64,
+                    },
+                }
+            current_metadata = validate_snapshot(current_data, validation_manifest)
+            current_pointer = _snapshot_pointer(
+                current_manifest["dataFile"], current_metadata
+            )
+        if update_kind == "year-rollover":
+            if current_manifest is None or current_data is None:
+                raise ValueError("year-rollover requires an active consumer generation")
+            old_year = current_metadata["academicYear"].removesuffix("年度")
+            old_index_path = consumer_data_dir / "history" / old_year / "index.json"
+            old_index = None
+            if old_index_path.exists():
+                old_index = validate_index(
+                    read_json(old_index_path, "history index"),
+                    current_metadata["academicYear"],
+                )
+                if old_index["latest"] != current_pointer:
+                    raise ValueError("old history index latest does not match active generation")
+                old_reconstructed, _ = _load_verified_chain(
+                    consumer_data_dir,
+                    old_index_path.parent,
+                    old_index,
+                )
+                if canonical_sha256(old_reconstructed) != canonical_sha256(current_data):
+                    raise ValueError("old history chain does not reconstruct current consumer data")
+            old_index_payload = None
+            old_index_relative_path = None
+            if old_index is None:
+                old_index = {
+                    "schemaVersion": INDEX_SCHEMA_VERSION,
+                    "academicYear": current_metadata["academicYear"],
+                    "baseline": current_pointer,
+                    "latest": current_pointer,
+                    "artifacts": [],
+                    "classificationArtifacts": [],
+                }
+                old_index_payload = _json_bytes(old_index)
+                old_index_relative_path = f"data/history/{old_year}/index.json"
+            classification_pointer, classification_path, classification_payload = (
+                _prepare_classification_artifact(
+                    classification_artifact_path,
+                    history_dir,
+                    current_data,
+                    current_manifest,
+                    incoming_data,
+                    incoming_manifest,
+                )
+            )
+            new_index = {
+                "schemaVersion": INDEX_SCHEMA_VERSION,
+                "academicYear": academic_year,
+                "baseline": incoming_pointer,
+                "latest": incoming_pointer,
+                "artifacts": [],
+                "classificationArtifacts": (
+                    [classification_pointer] if classification_pointer else []
+                ),
+            }
+            if classification_path is not None and classification_payload is not None:
+                _atomic_write(classification_path, classification_payload)
+            if old_index_payload is not None:
+                _atomic_write(old_index_path, old_index_payload)
+            _atomic_write(history_dir / "index.json", _json_bytes(new_index))
+            return {
+                "mode": "rollover",
+                "indexPath": str(index_path),
+                "indexRelativePath": f"data/history/{year}/index.json",
+                "previousIndexRelativePath": old_index_relative_path,
+                "artifactPath": None,
+                "artifactRelativePath": None,
+                "classificationRelativePath": (
+                    f"data/history/{year}/{classification_path.name}"
+                    if classification_path else None
+                ),
+                "obsoleteDataFile": None,
+            }
+        classification_pointer, classification_path, classification_payload = (
             _prepare_classification_artifact(
                 classification_artifact_path,
                 history_dir,
@@ -301,6 +406,8 @@ def prepare_history_update(
                 [classification_pointer] if classification_pointer else []
             ),
         }
+        if classification_path is not None and classification_payload is not None:
+            _atomic_write(classification_path, classification_payload)
         _atomic_write(index_path, _json_bytes(index))
         return {
             "mode": "initialize",
@@ -313,6 +420,7 @@ def prepare_history_update(
                 if classification_path else None
             ),
             "obsoleteDataFile": None,
+            "previousIndexRelativePath": None,
         }
 
     index = validate_index(read_json(index_path, "history index"), academic_year)
@@ -343,7 +451,7 @@ def prepare_history_update(
         incoming_data,
         incoming_manifest,
     )
-    classification_pointer, classification_path = (
+    classification_pointer, classification_path, classification_payload = (
         _prepare_classification_artifact(
             classification_artifact_path,
             history_dir,
@@ -387,6 +495,8 @@ def prepare_history_update(
             [classification_pointer] if classification_pointer else []
         ),
     }
+    if classification_path is not None and classification_payload is not None:
+        _atomic_write(classification_path, classification_payload)
     _atomic_write(artifact_path, artifact_payload)
     _atomic_write(index_path, _json_bytes(updated_index))
     obsolete = current_manifest["dataFile"]
@@ -405,6 +515,7 @@ def prepare_history_update(
             if classification_path else None
         ),
         "obsoleteDataFile": obsolete,
+        "previousIndexRelativePath": None,
     }
 
 
@@ -413,12 +524,16 @@ def main() -> None:
     parser.add_argument("--consumer-data-dir", required=True, type=Path)
     parser.add_argument("--incoming-manifest", required=True, type=Path)
     parser.add_argument("--classification-artifact", type=Path)
+    parser.add_argument(
+        "--update-kind", choices=("same-year", "year-rollover"), default="same-year"
+    )
     parser.add_argument("--github-output", type=Path)
     args = parser.parse_args()
     result = prepare_history_update(
         args.consumer_data_dir,
         args.incoming_manifest,
         args.classification_artifact,
+        args.update_kind,
     )
     if args.github_output:
         with args.github_output.open("a", encoding="utf-8") as output:

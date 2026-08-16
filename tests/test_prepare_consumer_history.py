@@ -189,3 +189,98 @@ def test_rejects_tampered_chain_and_cross_year_update(tmp_path: Path):
     other_manifest = write_generation(incoming, other_year, "2027-04-01")
     with pytest.raises(ValueError, match="academicYear"):
         prepare_history_update(consumer_data, other_manifest)
+
+
+def test_year_rollover_preserves_active_generation_and_creates_baselines(
+    tmp_path: Path,
+):
+    consumer_data = tmp_path / "consumer" / "data"
+    consumer_data.mkdir(parents=True)
+    incoming = tmp_path / "incoming"
+    base, target = snapshots()
+    active_manifest = write_generation(incoming, base, "2026-04-01")
+    install_generation(consumer_data, active_manifest)
+    next_data = {
+        "20000100": {
+            **next(iter(target.values())),
+            "年度": "2027年度",
+            "講義コード": "20000100",
+        }
+    }
+    next_manifest = write_generation(incoming, next_data, "2027-04-01")
+
+    result = prepare_history_update(
+        consumer_data, next_manifest, update_kind="year-rollover"
+    )
+
+    assert result["mode"] == "rollover"
+    assert result["previousIndexRelativePath"] == "data/history/2026/index.json"
+    assert result["obsoleteDataFile"] is None
+    old_index = read_json(
+        consumer_data / "history" / "2026" / "index.json", "old index"
+    )
+    new_index = read_json(
+        consumer_data / "history" / "2027" / "index.json", "new index"
+    )
+    assert old_index["baseline"] == old_index["latest"]
+    assert new_index["baseline"] == new_index["latest"]
+    active_data_file = json.loads(
+        active_manifest.read_text(encoding="utf-8")
+    )["dataFile"]
+    assert (consumer_data / active_data_file).exists()
+
+
+def test_year_rollover_classification_is_recorded_and_invalid_requests_do_not_write(
+    tmp_path: Path,
+):
+    consumer_data = tmp_path / "consumer" / "data"
+    consumer_data.mkdir(parents=True)
+    incoming = tmp_path / "incoming"
+    base, target = snapshots()
+    active_manifest = write_generation(incoming, base, "2026-04-01")
+    install_generation(consumer_data, active_manifest)
+    next_data = {
+        "20000100": {
+            **next(iter(target.values())),
+            "年度": "2027年度",
+            "講義コード": "20000100",
+        }
+    }
+    next_manifest = write_generation(incoming, next_data, "2027-04-01")
+    classification = write_classification_artifact(
+        tmp_path / "classification.json",
+        base,
+        json.loads(active_manifest.read_text(encoding="utf-8")),
+        next_data,
+        json.loads(next_manifest.read_text(encoding="utf-8")),
+    )
+
+    result = prepare_history_update(
+        consumer_data,
+        next_manifest,
+        classification,
+        update_kind="year-rollover",
+    )
+    assert result["classificationRelativePath"].startswith(
+        "data/history/2027/classification_"
+    )
+    assert len(read_json(
+        consumer_data / "history" / "2027" / "index.json", "new index"
+    )["classificationArtifacts"]) == 1
+
+    before = sorted(path.relative_to(consumer_data) for path in consumer_data.rglob("*"))
+    for year in ("2026", "2028", "2025"):
+        bad_data = {
+            "30000100": {
+                **next(iter(target.values())),
+                "年度": f"{year}年度",
+                "講義コード": "30000100",
+            }
+        }
+        bad_manifest = write_generation(incoming, bad_data, f"{year}-04-01")
+        with pytest.raises(ValueError):
+            prepare_history_update(
+                consumer_data, bad_manifest, update_kind="year-rollover"
+            )
+    after = sorted(path.relative_to(consumer_data) for path in consumer_data.rglob("*"))
+    assert before == after
