@@ -143,6 +143,9 @@ def test_exporter_writes_bound_structure_report(tmp_path: Path):
 def test_exporter_rejects_unknown_header_without_presence_entry(tmp_path: Path):
     report = structure_report()
     report["unknownHeaders"] = ["追加項目"]
+    report["observedHeaders"] = sorted(
+        [*report["observedHeaders"], "追加項目"]
+    )
     with pytest.raises(ValueError, match="header presence"):
         Exporter(str(tmp_path)).export(
             {"10000100": subject()},
@@ -167,6 +170,11 @@ def test_exporter_rejects_unknown_header_not_observed(tmp_path: Path):
     (
         lambda report: (
             report["unknownHeaders"].append("追加項目"),
+            report.update({
+                "observedHeaders": sorted(
+                    [*report["observedHeaders"], "追加項目"]
+                )
+            }),
             report["headerPresence"].update({
                 "追加項目": {
                     "presentCount": 1, "presenceRate": 1.0,
