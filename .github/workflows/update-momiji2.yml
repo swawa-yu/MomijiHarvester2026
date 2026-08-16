@@ -50,8 +50,10 @@ jobs:
           uv pip install -r requirements.txt
           PYTHONPATH=. uv run pytest -q
           uv run flake8 scripts/resolve_generation_artifacts.py \
+            scripts/validate_target_year.py \
             scripts/validate_consumer_update_diff.py \
-            tests/test_generation_artifacts.py
+            tests/test_generation_artifacts.py \
+            tests/test_validate_target_year.py
 
       - name: Clone the public consumer integration branch
         run: |
