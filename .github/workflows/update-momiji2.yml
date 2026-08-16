@@ -15,6 +15,14 @@ on:
         description: Required for full mode (4-digit academic year)
         required: false
         type: string
+      update_kind:
+        description: Select a same-year update or a one-year rollover
+        required: true
+        default: same-year
+        type: choice
+        options:
+          - same-year
+          - year-rollover
 
 permissions:
   contents: read
@@ -42,8 +50,26 @@ jobs:
           uv pip install -r requirements.txt
           PYTHONPATH=. uv run pytest -q
           uv run flake8 scripts/resolve_generation_artifacts.py \
+            scripts/validate_target_year.py \
             scripts/validate_consumer_update_diff.py \
-            tests/test_generation_artifacts.py
+            tests/test_generation_artifacts.py \
+            tests/test_validate_target_year.py
+
+      - name: Clone the public consumer integration branch
+        run: |
+          git clone --branch develop \
+            https://github.com/swawa-yu/momiji2.git "$RUNNER_TEMP/momiji2"
+
+      - name: Verify the target year transition
+        if: inputs.mode == 'full'
+        env:
+          UPDATE_KIND: ${{ inputs.update_kind }}
+          TARGET_YEAR: ${{ inputs.target_year }}
+        run: |
+          python scripts/validate_target_year.py \
+            --update-kind "$UPDATE_KIND" \
+            --target-year "$TARGET_YEAR" \
+            --manifest "$RUNNER_TEMP/momiji2/data/subjectDataManifest.json"
 
       - name: Crawl the complete Japanese syllabus
         if: inputs.mode == 'full'
@@ -51,10 +77,6 @@ jobs:
         env:
           TARGET_YEAR: ${{ inputs.target_year }}
         run: |
-          if [[ ! "$TARGET_YEAR" =~ ^[0-9]{4}$ ]]; then
-            echo "target_year must be a 4-digit year when mode is full." >&2
-            exit 1
-          fi
           output_dir="$RUNNER_TEMP/harvester-output"
           mkdir "$output_dir"
           uv run python -m src.main run \
@@ -64,11 +86,6 @@ jobs:
           python scripts/resolve_generation_artifacts.py \
             --output-dir "$output_dir" \
             --github-output "$GITHUB_OUTPUT"
-
-      - name: Clone the public consumer integration branch
-        run: |
-          git clone --branch develop \
-            https://github.com/swawa-yu/momiji2.git "$RUNNER_TEMP/momiji2"
 
       - name: Set up Node
         uses: actions/setup-node@v4
