@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 
 from src.client import HttpClient
 from src.config import ScraperConfig
-from src.parser import Parser
+from src.parser import Parser, SubjectStructureError
 from src.exporter import Exporter
 from src.models import SubjectDetails
 from tqdm import tqdm
@@ -279,6 +279,10 @@ class MomijiCrawler:
                                 f"Subject academic year mismatch: expected {target_year}年度, "
                                 f"found {subject.nendo} at {subject_url}"
                             )
+                    except SubjectStructureError as error:
+                        raise SubjectStructureError(
+                            f"{error} (source URL: {subject_url})"
+                        ) from error
                     except Exception as e:
                         print(f"Failed to process {subject_url}: {e}")
                         failures.append((subject_url, e))

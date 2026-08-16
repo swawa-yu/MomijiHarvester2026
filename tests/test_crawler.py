@@ -7,7 +7,7 @@ import pytest
 from src.client import HttpClient
 from src.crawler import MomijiCrawler
 from src.exporter import Exporter
-from src.parser import Parser
+from src.parser import Parser, SubjectStructureError
 
 
 class LocalFileCrawler(MomijiCrawler):
@@ -410,7 +410,7 @@ async def test_unknown_subject_header_preserves_existing_generation(
         "<th>年度</th>", "<th>未知ヘッダー</th>")
     crawler = MemoryCrawler(base_url, output_dir, failing_responses)
 
-    with pytest.raises(RuntimeError, match="Incomplete crawl") as error:
+    with pytest.raises(SubjectStructureError) as error:
         await crawler.run(max_subjects=2)
 
     assert "未知ヘッダー" in str(error.value)
@@ -442,7 +442,7 @@ async def test_missing_subject_header_preserves_existing_generation(
     )
     crawler = MemoryCrawler(base_url, output_dir, failing_responses)
 
-    with pytest.raises(RuntimeError, match="Incomplete crawl") as error:
+    with pytest.raises(SubjectStructureError) as error:
         await crawler.run(max_subjects=2)
 
     assert "Missing subject header" in str(error.value)

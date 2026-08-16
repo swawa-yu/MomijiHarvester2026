@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 from src.models import SubjectDetails
+from src.parser import Parser
 
 
 class Exporter:
@@ -164,10 +165,8 @@ class Exporter:
                 raise ValueError(
                     f"subject structure {key} must be sorted unique strings"
                 )
-        if report["unknownHeaders"] or report["missingHeaders"]:
-            raise ValueError(
-                "subject structure report contains contract drift"
-            )
+        if report["missingHeaders"]:
+            raise ValueError("subject structure report contains missing headers")
         header_presence = report["headerPresence"]
         if not isinstance(header_presence, dict):
             raise ValueError("subject structure headerPresence must be an object")
