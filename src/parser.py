@@ -4,15 +4,40 @@ from src.models import SubjectDetails
 
 
 class Parser:
+    SUBJECT_CONTRACT_HEADERS = (
+        "年度", "開講部局", "講義コード", "科目区分", "授業科目名",
+        "担当教員名", "開講キャンパス", "開設期", "曜日・時限・講義室",
+        "単位", "使用言語", "学習の段階", "対象学生", "授業の目標・概要等",
+        "予習・復習への アドバイス", "履修上の注意 受講条件等", "メッセージ",
+        "その他",
+    )
+    LEGACY_SOURCE_HEADERS = (
+        "授業科目名 （フリガナ）", "英文授業科目名", "担当教員名 (フリガナ)",
+        "授業の方法", "授業の方法 【詳細情報】", "週時間", "学問分野（分科）",
+        "学問分野（分野）", "学習の成果", "成績評価の基準等", "授業計画",
+        "教科書・参考書等", "教養教育での この授業の位置づけ", "教職専門科目",
+        "教科専門科目", "実務経験", "実務経験の概要と それに基づく授業内容",
+        "授業で使用する メディア・機器等", "授業で取り入れる 学習手法",
+        "授業のキーワード", "【詳細情報】", "English",
+    )
+
     @staticmethod
     def get_html_soup(html: str) -> BeautifulSoup:
         return BeautifulSoup(html, "html.parser")
 
     @staticmethod
-    def parse_subject_page(html: str, base_url: str, faculty_name: str) -> SubjectDetails:
-        soup = Parser.get_html_soup(html)
+    def _normalize_subject_header(header: str) -> str:
+        return (
+            header.replace(" ", "")
+            .replace("\u3000", "")
+            .replace("\n", "")
+            .replace("<BR>", "")
+            .strip()
+        )
 
-        # 表形式データを行単位で取得
+    @staticmethod
+    def _extract_subject_raw(html: str) -> dict[str, str]:
+        soup = Parser.get_html_soup(html)
         raw = {}
         for tr in soup.select("table tr"):
             ths = tr.select("th")
@@ -39,46 +64,120 @@ class Parser:
                     value = tds[i].get_text(separator=" ", strip=True).strip()
                     if label:
                         raw[label] = value
+        return raw
 
-        def normalize_label(key: str) -> str:
-            return key.replace(" ", "").replace("\u3000", "").replace("\n", "").replace("<BR>", "").strip()
-
-        known_headers = {
-            "年度", "開講部局", "講義コード", "科目区分", "授業科目名",
-            "担当教員名", "開講キャンパス", "開設期", "曜日・時限・講義室",
-            "単位", "使用言語", "学習の段階", "対象学生", "授業の目標・概要等",
-            "予習・復習への アドバイス", "履修上の注意 受講条件等", "メッセージ",
-            "その他",
-            # These legacy fields are present in the source page but are not
-            # part of the subject JSON contract.
-            "授業科目名 （フリガナ）", "英文授業科目名", "担当教員名 (フリガナ)",
-            "授業の方法", "授業の方法 【詳細情報】", "週時間", "学問分野（分科）",
-            "学問分野（分野）", "学習の成果", "成績評価の基準等", "授業計画",
-            "教科書・参考書等", "教養教育での この授業の位置づけ", "教職専門科目",
-            "教科専門科目", "実務経験", "実務経験の概要と それに基づく授業内容",
-            "授業で使用する メディア・機器等", "授業で取り入れる 学習手法",
-            "授業のキーワード", "【詳細情報】", "English",
+    @classmethod
+    def inspect_subject_page_structure(
+        cls,
+        html: str,
+        source_url: str,
+    ) -> tuple[dict[str, str], dict[str, object]]:
+        raw = cls._extract_subject_raw(html)
+        known_headers = cls.SUBJECT_CONTRACT_HEADERS + cls.LEGACY_SOURCE_HEADERS
+        canonical_by_normalized = {
+            cls._normalize_subject_header(header): header
+            for header in known_headers
+        }
+        observed_headers = {
+            canonical_by_normalized[normalized]
+            for label in raw
+            if (normalized := cls._normalize_subject_header(label))
+            in canonical_by_normalized
         }
         unknown_headers = sorted(
-            label for label in raw
-            if normalize_label(label) not in {normalize_label(h) for h in known_headers}
+            label
+            for label in raw
+            if cls._normalize_subject_header(label) not in canonical_by_normalized
         )
+        missing_headers = [
+            header
+            for header in cls.SUBJECT_CONTRACT_HEADERS
+            if header not in observed_headers
+        ]
+        return raw, {
+            "sourceUrl": source_url,
+            "observedHeaders": sorted(observed_headers),
+            "unknownHeaders": unknown_headers,
+            "missingHeaders": missing_headers,
+        }
+
+    @classmethod
+    def summarize_subject_page_structures(
+        cls,
+        observations: list[dict[str, object]],
+    ) -> dict[str, object]:
+        page_count = len(observations)
+        all_known_headers = sorted(
+            cls.SUBJECT_CONTRACT_HEADERS + cls.LEGACY_SOURCE_HEADERS
+        )
+        presence_counts = {header: 0 for header in all_known_headers}
+        unknown_headers = set()
+        for observation in observations:
+            for header in observation["observedHeaders"]:
+                presence_counts[header] += 1
+            unknown_headers.update(observation["unknownHeaders"])
+
+        header_presence = {
+            header: {
+                "presentCount": count,
+                "presenceRate": count / page_count if page_count else 0,
+            }
+            for header, count in presence_counts.items()
+        }
+        missing_headers = [
+            header
+            for header in cls.SUBJECT_CONTRACT_HEADERS
+            if presence_counts[header] != page_count
+        ]
+        return {
+            "subjectPageCount": page_count,
+            "observedHeaders": [
+                header for header, count in presence_counts.items() if count
+            ],
+            "unknownHeaders": sorted(unknown_headers),
+            "missingHeaders": missing_headers,
+            "headerPresence": header_presence,
+        }
+
+    @classmethod
+    def parse_subject_page_with_structure(
+        cls,
+        html: str,
+        base_url: str,
+        faculty_name: str,
+    ) -> tuple[SubjectDetails, dict[str, object]]:
+        raw, structure = cls.inspect_subject_page_structure(html, base_url)
+        unknown_headers = structure["unknownHeaders"]
+        missing_headers = structure["missingHeaders"]
         if unknown_headers:
-            raise ValueError(
+            structure_detail = (
                 "Unknown subject header(s) "
-                f"{', '.join(repr(header) for header in unknown_headers)} "
+                f"{', '.join(repr(header) for header in unknown_headers)}"
+            )
+            if missing_headers:
+                structure_detail += (
+                    "; missing expected header(s) "
+                    f"{', '.join(repr(header) for header in missing_headers)}"
+                )
+            raise ValueError(
+                f"{structure_detail} in {base_url}"
+            )
+        if missing_headers:
+            raise ValueError(
+                "Missing subject header(s) "
+                f"{', '.join(repr(header) for header in missing_headers)} "
                 f"in {base_url}"
             )
 
         def find_value(expected: str, alternates=None):
             alternates = alternates or []
-            normalized_expected = normalize_label(expected)
+            normalized_expected = cls._normalize_subject_header(expected)
             for k, v in raw.items():
-                if normalize_label(k) == normalized_expected:
+                if cls._normalize_subject_header(k) == normalized_expected:
                     return v
             for alt in alternates:
                 for k, v in raw.items():
-                    if normalize_label(k) == normalize_label(alt):
+                    if cls._normalize_subject_header(k) == cls._normalize_subject_header(alt):
                         return v
             return ""
 
@@ -107,7 +206,22 @@ class Parser:
             "その他": normalize_text(find_value("その他")),
         }
 
-        return SubjectDetails(**{k: v for k, v in data.items() if v is not None})
+        subject = SubjectDetails(**{k: v for k, v in data.items() if v is not None})
+        return subject, structure
+
+    @classmethod
+    def parse_subject_page(
+        cls,
+        html: str,
+        base_url: str,
+        faculty_name: str,
+    ) -> SubjectDetails:
+        subject, _ = cls.parse_subject_page_with_structure(
+            html,
+            base_url,
+            faculty_name,
+        )
+        return subject
 
     @staticmethod
     def _normalized_text(node) -> str:
