@@ -1,6 +1,7 @@
 import asyncio
 import json
 from pathlib import Path
+from typing import Optional
 
 import typer
 from src.crawler import MomijiCrawler
@@ -15,6 +16,9 @@ def run(
     ),
     output_dir: str = typer.Option("output", help="JSON出力ディレクトリ"),
     max_subjects: int = typer.Option(20, help="取得上限(0は無制限; デフォルト20)"),
+    target_year: Optional[str] = typer.Option(
+        None, help="取得対象年度（4桁。未指定時は候補の年度混在を拒否）"
+    ),
     include_english: bool = typer.Option(
         False,
         help="現在未対応。英語版は将来、英語版トップを起点に別契約で取得する",
@@ -22,7 +26,7 @@ def run(
     dry_run: bool = typer.Option(False, help="実際の出力を行わずに動作確認する"),
 ) -> None:
     crawler = MomijiCrawler(base_url=base_url, output_dir=output_dir, include_english=include_english)
-    asyncio.run(crawler.run(max_subjects=max_subjects, dry_run=dry_run))
+    asyncio.run(crawler.run(max_subjects=max_subjects, dry_run=dry_run, target_year=target_year))
 
 
 async def _list_departments_async(base_url: str, output_file: str) -> None:

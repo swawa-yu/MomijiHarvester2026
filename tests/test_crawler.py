@@ -225,6 +225,47 @@ async def test_normal_run_deduplicates_globally_and_preserves_first_context(
 
 
 @pytest.mark.asyncio
+async def test_target_year_selects_only_2027_from_mixed_top_page(tmp_path: Path):
+    base_url = "https://example.test/syllabus/"
+    responses = {
+        base_url: top_page("2026_AA.html", "2027_BB.html"),
+        base_url + "2026_AA.html": faculty_page("2026_AA_10000100.html"),
+        base_url + "2027_BB.html": faculty_page("2027_BB_10000101.html"),
+        base_url + "2026_AA_10000100.html": subject_page("2026", "10000100"),
+        base_url + "2027_BB_10000101.html": subject_page("2027", "10000101"),
+    }
+    crawler = MemoryCrawler(base_url, tmp_path, responses)
+
+    await crawler.run(max_subjects=0, target_year="2027")
+
+    assert base_url + "2026_AA.html" not in crawler.fetch_order
+    assert base_url + "2026_AA_10000100.html" not in crawler.fetch_order
+    assert base_url + "2027_BB_10000101.html" in crawler.fetch_order
+    manifest = json.loads((tmp_path / "subjectDataManifest.json").read_text())
+    assert manifest["academicYear"] == "2027年度"
+
+
+@pytest.mark.asyncio
+async def test_target_year_detail_mismatch_preserves_existing_generation(tmp_path: Path):
+    base_url = "https://example.test/syllabus/"
+    output_dir = tmp_path / "output"
+    baseline = MemoryCrawler(base_url, output_dir, preflight_responses(base_url))
+    await baseline.run(max_subjects=1)
+    before = {p.name: p.read_bytes() for p in output_dir.iterdir()}
+    responses = {
+        base_url: top_page("2027_BB.html"),
+        base_url + "2027_BB.html": faculty_page("2027_BB_10000101.html"),
+        base_url + "2027_BB_10000101.html": subject_page("2026", "10000101"),
+    }
+    crawler = MemoryCrawler(base_url, output_dir, responses)
+
+    with pytest.raises(RuntimeError, match="Incomplete crawl"):
+        await crawler.run(max_subjects=0, target_year="2027")
+
+    assert {p.name: p.read_bytes() for p in output_dir.iterdir()} == before
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("responses_factory, error_type, message", [
     (
         lambda base: {
