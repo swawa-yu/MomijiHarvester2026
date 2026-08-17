@@ -469,6 +469,6 @@ jobs:
           """
           Path(sys.argv[1]).write_text(body, encoding="utf-8")
           PY
-          gh pr create --repo swawa-yu/momiji2 --base develop --head "$BRANCH" \
+          gh pr create --repo swawa-yu/momiji2 --base develop --head "$BRANCH" --draft \
             --title "data: ${YEAR}年度シラバス生成物を更新" \
             --body-file "$body_path"
