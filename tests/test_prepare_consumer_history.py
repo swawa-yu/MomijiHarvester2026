@@ -177,6 +177,103 @@ def test_initialization_keeps_same_year_legacy_regression_fixture(tmp_path: Path
     assert len(index["classificationArtifacts"]) == 1
 
 
+def test_fresh_same_year_preserves_active_as_baseline_and_appends_first_artifact(
+    tmp_path: Path,
+):
+    consumer_data = tmp_path / "consumer" / "data"
+    consumer_data.mkdir(parents=True)
+    incoming = tmp_path / "incoming"
+    base, target = snapshots()
+    active_manifest = write_generation(incoming, base, "2026-04-07")
+    install_generation(consumer_data, active_manifest)
+    target_manifest = write_generation(incoming, target, "2026-08-16")
+    classification = write_classification_artifact(
+        tmp_path / "classification.json",
+        base,
+        json.loads(active_manifest.read_text(encoding="utf-8")),
+        target,
+        json.loads(target_manifest.read_text(encoding="utf-8")),
+    )
+    active_data_file = json.loads(active_manifest.read_text(encoding="utf-8"))["dataFile"]
+
+    result = prepare_history_update(consumer_data, target_manifest, classification)
+
+    assert result["mode"] == "initialize"
+    assert result["artifactPath"] is not None
+    assert result["artifactRelativePath"].startswith("data/history/2026/history_")
+    assert result["obsoleteDataFile"] is None
+    index = read_json(consumer_data / "history" / "2026" / "index.json", "index")
+    assert index["baseline"]["dataFile"] == active_data_file
+    assert index["latest"]["dataFile"] != active_data_file
+    assert len(index["artifacts"]) == 1
+    assert len(index["classificationArtifacts"]) == 1
+    classification_file = index["classificationArtifacts"][0]["dataFile"]
+    assert classification_file.startswith("classification_2026-04-07_2026-08-16_")
+    assert index["artifacts"][0]["sha256"] == hashlib.sha256(
+        Path(result["artifactPath"]).read_bytes()
+    ).hexdigest()
+    assert index["classificationArtifacts"][0]["sha256"] == hashlib.sha256(
+        (consumer_data / "history" / "2026" / classification_file).read_bytes()
+    ).hexdigest()
+    assert result["classificationRelativePath"].endswith(classification_file)
+    artifact = read_json(Path(result["artifactPath"]), "artifact")
+    assert canonical_sha256(verify_chain(base, [artifact])) == canonical_sha256(target)
+    assert (consumer_data / active_data_file).exists()
+
+
+def test_fresh_same_year_same_generation_initializes_without_self_diff(tmp_path: Path):
+    consumer_data = tmp_path / "consumer" / "data"
+    consumer_data.mkdir(parents=True)
+    incoming = tmp_path / "incoming"
+    base, _ = snapshots()
+    manifest_path = write_generation(incoming, base, "2026-04-07")
+    install_generation(consumer_data, manifest_path)
+
+    result = prepare_history_update(consumer_data, manifest_path)
+
+    assert result["mode"] == "initialize"
+    assert result["artifactPath"] is None
+    index = read_json(consumer_data / "history" / "2026" / "index.json", "index")
+    assert index["baseline"] == index["latest"]
+    assert index["artifacts"] == []
+
+
+def test_fresh_same_year_validation_failure_does_not_write_consumer_data(
+    tmp_path: Path,
+):
+    consumer_data = tmp_path / "consumer" / "data"
+    consumer_data.mkdir(parents=True)
+    incoming = tmp_path / "incoming"
+    base, target = snapshots()
+    active_manifest = write_generation(incoming, base, "2026-04-07")
+    install_generation(consumer_data, active_manifest)
+    target_manifest = write_generation(incoming, target, "2026-08-16")
+    classification = write_classification_artifact(
+        tmp_path / "classification.json",
+        base,
+        json.loads(active_manifest.read_text(encoding="utf-8")),
+        target,
+        json.loads(target_manifest.read_text(encoding="utf-8")),
+    )
+    broken = json.loads(classification.read_text(encoding="utf-8"))
+    broken["schemaVersion"] = 3
+    classification.write_text(json.dumps(broken), encoding="utf-8")
+    before = {
+        path.relative_to(consumer_data): path.read_bytes()
+        for path in consumer_data.rglob("*") if path.is_file()
+    }
+
+    with pytest.raises(ValueError, match="schemaVersion"):
+        prepare_history_update(consumer_data, target_manifest, classification)
+
+    after = {
+        path.relative_to(consumer_data): path.read_bytes()
+        for path in consumer_data.rglob("*") if path.is_file()
+    }
+    assert after == before
+    assert not (consumer_data / "history" / "2026" / "index.json").exists()
+
+
 def test_same_year_accepts_schema_version_2_and_records_pointer_sha(tmp_path: Path):
     consumer_data = tmp_path / "consumer" / "data"
     consumer_data.mkdir(parents=True)

@@ -394,6 +394,74 @@ def prepare_history_update(
                 ),
                 "obsoleteDataFile": None,
             }
+        if (
+            current_manifest is not None
+            and current_data is not None
+            and current_metadata["academicYear"] == academic_year
+            and current_manifest.get("schemaVersion") == 1
+            and current_pointer != incoming_pointer
+        ):
+            artifact = create_diff(
+                current_data,
+                current_manifest,
+                incoming_data,
+                incoming_manifest,
+            )
+            classification_pointer, classification_path, classification_payload = (
+                _prepare_classification_artifact(
+                    classification_artifact_path,
+                    history_dir,
+                    current_data,
+                    current_manifest,
+                    incoming_data,
+                    incoming_manifest,
+                )
+            )
+            artifact_payload = _json_bytes(artifact)
+            artifact_sha256 = hashlib.sha256(artifact_payload).hexdigest()
+            artifact_filename = (
+                f"history_{current_metadata['retrievedAt']}_"
+                f"{incoming_metadata['retrievedAt']}_{artifact_sha256[:12]}.json"
+            )
+            artifact_path = history_dir / artifact_filename
+            if artifact_path.exists() and artifact_path.read_bytes() != artifact_payload:
+                raise ValueError("history artifact filename collision")
+            if canonical_sha256(verify_chain(current_data, [artifact])) != (
+                incoming_metadata["canonicalSha256"]
+            ):
+                raise ValueError(
+                    "prospective history chain does not reconstruct incoming data"
+                )
+            index = {
+                "schemaVersion": INDEX_SCHEMA_VERSION,
+                "academicYear": academic_year,
+                "baseline": current_pointer,
+                "latest": incoming_pointer,
+                "artifacts": [{
+                    "dataFile": artifact_filename,
+                    "sha256": artifact_sha256,
+                }],
+                "classificationArtifacts": (
+                    [classification_pointer] if classification_pointer else []
+                ),
+            }
+            if classification_path is not None and classification_payload is not None:
+                _atomic_write(classification_path, classification_payload)
+            _atomic_write(artifact_path, artifact_payload)
+            _atomic_write(index_path, _json_bytes(index))
+            return {
+                "mode": "initialize",
+                "indexPath": str(index_path),
+                "indexRelativePath": f"data/history/{year}/index.json",
+                "artifactPath": str(artifact_path),
+                "artifactRelativePath": f"data/history/{year}/{artifact_filename}",
+                "classificationRelativePath": (
+                    f"data/history/{year}/{classification_path.name}"
+                    if classification_path else None
+                ),
+                "obsoleteDataFile": None,
+                "previousIndexRelativePath": None,
+            }
         classification_pointer, classification_path, classification_payload = (
             _prepare_classification_artifact(
                 classification_artifact_path,
