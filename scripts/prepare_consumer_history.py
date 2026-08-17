@@ -398,12 +398,11 @@ def prepare_history_update(
             current_manifest is not None
             and current_data is not None
             and current_metadata["academicYear"] == academic_year
-            and current_manifest.get("schemaVersion") == 1
             and current_pointer != incoming_pointer
         ):
             artifact = create_diff(
                 current_data,
-                current_manifest,
+                validation_manifest,
                 incoming_data,
                 incoming_manifest,
             )

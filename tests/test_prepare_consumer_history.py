@@ -166,6 +166,8 @@ def test_initialization_keeps_same_year_legacy_regression_fixture(tmp_path: Path
     )
 
     assert result["mode"] == "initialize"
+    assert result["artifactPath"] is not None
+    assert result["artifactRelativePath"].startswith("data/history/2026/history_")
     assert result["obsoleteDataFile"] is None
     assert result["classificationRelativePath"].startswith(
         "data/history/2026/classification_"
@@ -174,6 +176,12 @@ def test_initialization_keeps_same_year_legacy_regression_fixture(tmp_path: Path
         consumer_data / "history" / "2026" / "index.json",
         "history index",
     )
+    assert index["baseline"]["dataFile"] == legacy_manifest["dataFile"]
+    assert len(index["artifacts"]) == 1
+    artifact = read_json(Path(result["artifactPath"]), "history artifact")
+    assert canonical_sha256(verify_chain(base, [artifact])) == canonical_sha256(target)
+    assert artifact["base"]["retrievedAt"] == "2026-04-01"
+    assert artifact["target"]["retrievedAt"] == "2026-04-02"
     assert len(index["classificationArtifacts"]) == 1
 
 
